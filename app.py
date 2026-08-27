@@ -4,11 +4,10 @@ import numpy as np
 from scipy.stats import poisson
 
 # ==========================================
-# 1. BASE DE DATOS CON CONFIGURACIÓN GEOGRÁFICA
+# 1. BASE DE DATOS DE LOS 18 EQUIPOS OFICIALES
 # ==========================================
 @st.cache_data
 def cargar_y_calcular_estadisticas():
-    # Añadimos la 'Region' a cada equipo para activar los factores climáticos
     db_dinamica = {
         'Alianza Lima':        {'PJ_L': 5, 'GF_L': 2.10, 'GC_L': 0.60, 'PJ_V': 5, 'GF_V': 1.50, 'GC_V': 0.90, 'Region': 'Costa'},
         'Universitario':       {'PJ_L': 5, 'GF_L': 2.40, 'GC_L': 0.40, 'PJ_V': 5, 'GF_V': 1.30, 'GC_V': 0.70, 'Region': 'Costa'},
@@ -24,7 +23,7 @@ def cargar_y_calcular_estadisticas():
         'Sport Boys':          {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.30, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.00, 'Region': 'Costa'},
         'UTC':                 {'PJ_L': 5, 'GF_L': 1.40, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 1.90, 'Region': 'Altura'},
         'FC Cajamarca':        {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.50, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.10, 'Region': 'Altura'},
-        'César Vallejo':       {'PJ_L': 5, 'GF_L': 1.20, 'GC_L': 1.30, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 1.80, 'Region': 'Norte'},
+        'CD Moquegua':         {'PJ_L': 5, 'GF_L': 1.20, 'GC_L': 1.30, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 1.80, 'Region': 'Costa'},
         'Alianza Atlético':    {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.00, 'PJ_V': 5, 'GF_V': 0.50, 'GC_V': 1.70, 'Region': 'Norte'},
         'Juan Pablo II':       {'PJ_L': 5, 'GF_L': 0.90, 'GC_L': 1.80, 'PJ_V': 5, 'GF_V': 0.50, 'GC_V': 2.40, 'Region': 'Norte'},
         'Deportivo Garcilaso': {'PJ_L': 5, 'GF_L': 1.30, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.80, 'GC_V': 1.90, 'Region': 'Altura'}
@@ -36,7 +35,7 @@ def cargar_y_calcular_estadisticas():
 db_equipos, prom_gf_l, prom_gc_l = cargar_y_calcular_estadisticas()
 
 # ==========================================
-# 2. CALENDARIO DE PARTIDOS (JORNADAS)
+# 2. CALENDARIO REAL DE PARTIDOS
 # ==========================================
 calendario_fechas = {
     'Jornada 7': [
@@ -44,13 +43,11 @@ calendario_fechas = {
         ('Los Chankas', 'Juan Pablo II'),
         ('UTC', 'Universitario'),
         ('Alianza Lima', 'Deportivo Garcilaso'),
-        ('Sporting Cristal', 'Melgar')
-    ],
-    'Jornada 8': [
-        ('Universitario', 'Sport Boys'),
-        ('Cienciano', 'Sporting Cristal'),
-        ('Alianza Lima', 'Cienciano'),
-        ('Atlético Grau', 'Los Chankas')
+        ('CD Moquegua', 'Alianza Atlético'),
+        ('ADT Tarma', 'Sport Huancayo'),
+        ('Sport Boys', 'Sporting Cristal'),
+        ('Cienciano', 'Cusco FC'),
+        ('Atlético Grau', 'Melgar')
     ]
 }
 
@@ -60,7 +57,7 @@ calendario_fechas = {
 st.set_page_config(page_title="LIGA 1 - PREDICTOR ESTADÍSTICO", page_icon="🏆", layout="centered")
 
 st.title("🏆 LIGA 1 - PREDICTOR ESTADÍSTICO")
-st.write("Algoritmo optimizado con factores climáticos: Altura y Calor del Norte.")
+st.write("Algoritmo predictivo con factores climáticos: Altura y Calor del Norte.")
 
 jornada_seleccionada = st.selectbox("📅 Selecciona la Fecha del Torneo:", list(calendario_fechas.keys()))
 st.markdown("---")
@@ -75,18 +72,15 @@ for local, visita in calendario_fechas[jornada_seleccionada]:
     factor_defensa_local = 1.0
     alerta_clima = ""
 
-    # Caso A: Se juega en la Altura
     if reg_local == 'Altura' and reg_visita != 'Altura':
-        factor_ataque_visita = 0.75  # El visitante rinde 25% menos atacando en altura
-        factor_defensa_local = 0.85  # La defensa local mejora un 15% (recibe menos goles esperados)
+        factor_ataque_visita = 0.75
+        factor_defensa_local = 0.85
         alerta_clima = "🏔️ **Alerta:** Factor Altura activo"
-        
-    # Caso B: Se juega en el Norte (Calor Extremo)
     elif reg_local == 'Norte' and reg_visita != 'Norte':
-        factor_ataque_visita = 0.85  # El visitante rinde 15% menos por fatiga térmica
+        factor_ataque_visita = 0.85
         alerta_clima = "☀️ **Alerta:** Factor Calor del Norte activo"
 
-    # --- CÁCULOS DE POISSON MODIFICADOS ---
+    # --- CÁLCULOS MATEMÁTICOS DE POISSON ---
     fuerza_of_l = db_equipos[local]['GF_L'] / prom_gf_l
     fuerza_def_v = db_equipos[visita]['GC_V'] / prom_gf_l
     lambda_local = fuerza_of_l * fuerza_def_v * prom_gf_l * (1 / factor_defensa_local)
@@ -128,7 +122,6 @@ for local, visita in calendario_fechas[jornada_seleccionada]:
         else:
             st.markdown(f"### 🏟️ {local} vs {visita}")
             
-        # Mostrar el tag de alerta climática si aplica
         if alerta_clima:
             st.caption(alerta_clima)
             
@@ -140,5 +133,5 @@ for local, visita in calendario_fechas[jornada_seleccionada]:
         with col3:
             st.info(f"🔵 Visita: {pct_v}%")
             
-        st.markdown(f"**Resultado calculado:** `{local} {marcador_exacto[0]} - {marcador_exacto[1]} {visita}`")
+        st.markdown(f"**Resultado calculated:** `{local} {marcador_exacto[0]} - {marcador_exacto[1]} {visita}`")
         st.write("")
