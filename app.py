@@ -54,7 +54,7 @@ calendario_fechas = {
 }
 
 # ==========================================
-# 3. INTERFAZ VISUAL (DISEÑO PRO)
+# 3. INTERFAZ VISUAL NATIVA (MÁXIMA COMPATIBILIDAD)
 # ==========================================
 st.set_page_config(page_title="LIGA 1 - PREDICTOR ESTADÍSTICO", page_icon="🏆", layout="centered")
 
@@ -66,7 +66,7 @@ jornada_seleccionada = st.selectbox("📅 Selecciona la Fecha del Torneo:", list
 
 st.markdown("---")
 
-# Procesar y pintar todos los partidos en bloque
+# Procesar y pintar todos los partidos en bloque usando elementos nativos
 for local, visita in calendario_fechas[jornada_seleccionada]:
     
     # --- CÁLCULOS MATEMÁTICOS DE POISSON ---
@@ -98,44 +98,31 @@ for local, visita in calendario_fechas[jornada_seleccionada]:
                 max_prob_marcador = p_combinada
                 marcador_exacto = (i, j)
                 
-    # Normalizar para mostrar 100%
+    # Normalizar probabilidades
     total = prob_l + prob_e + prob_v
     pct_l = round((prob_l / total) * 100, 1)
     pct_e = round((prob_e / total) * 100, 1)
     pct_v = round((prob_v / total) * 100, 1)
     
-    # Determinar si es FIJA (Favorito dominante > 80%)
     es_fija = pct_l >= 80.0 or pct_v >= 80.0
-    color_borde = "#28a745" if es_fija else "#007bff"
     
-    # --- RENDERIZADO HTML SEGURO ---
-    badge_fija = '<span style="background-color:#ffeeba; color:#b55d00; padding:4px 10px; border-radius:12px; font-weight:bold; font-size:12px; float:right;">🔥 FIJA</span>' if es_fija else ''
-    
-    # Construcción de plantilla reemplazando valores sin usar f-strings problemáticos
-    html_template = """
-    <div style="border-left: 5px solid COLOR_BORDE; background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px;">
-        BADGE_FIJA
-        <h3 style="margin-top:0; color:#1e293b; font-size:18px;">🏟️ LOCAL vs VISITA</h3>
-        <div style="display: flex; gap: 10px; margin-top: 12px; margin-bottom: 15px; flex-wrap: wrap;">
-            <span style="background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🟢 Local: PCT_L%</span>
-            <span style="background-color: #fff3cd; color: #856404; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🟡 Empate: PCT_E%</span>
-            <span style="background-color: #cce5ff; color: #004085; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🔵 Visita: PCT_V%</span>
-        </div>
-        <div style="background-color: #e2e8f0; padding: 8px 12px; border-radius: 6px; display: inline-block; color: #334155; font-size:14px;">
-            Resultado calculado: <strong>LOCAL MARCADOR_L - MARCADOR_V VISITA</strong>
-        </div>
-    </div>
-    """
-    
-    card_render = html_template\
-        .replace("COLOR_BORDE", str(color_borde))\
-        .replace("BADGE_FIJA", str(badge_fija))\
-        .replace("LOCAL", str(local))\
-        .replace("VISITA", str(visita))\
-        .replace("PCT_L", str(pct_l))\
-        .replace("PCT_E", str(pct_e))\
-        .replace("PCT_V", str(pct_v))\
-        .replace("MARCADOR_L", str(marcador_exacto[0]))\
-        .replace("MARCADOR_V", str(marcador_exacto[1]))
-
-    st.markdown(card_render, unsafe_allowed_html=True)
+    # Crear la tarjeta contenedora nativa
+    with st.container(border=True):
+        # Título del partido y medalla si es Fija
+        if es_fija:
+            st.markdown(f"### 🏟️ {local} vs {visita} :orange[**🔥 FIJA**]")
+        else:
+            st.markdown(f"### 🏟️ {local} vs {visita}")
+            
+        # Bloques de porcentajes en columnas horizontales
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.success(f"🟢 Local: {pct_l}%")
+        with col2:
+            st.warning(f"🟡 Empate: {pct_e}%")
+        with col3:
+            st.info(f"🔵 Visita: {pct_v}%")
+            
+        # Marcador calculado abajo
+        st.markdown(f"**Resultado calculado:** `{local} {marcador_exacto[0]} - {marcador_exacto[1]} {visita}`")
+        st.write("") # Pequeño espacio divisor
