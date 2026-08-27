@@ -4,20 +4,30 @@ import numpy as np
 from scipy.stats import poisson
 
 # ==========================================
-# 1. BASE DE DATOS OPTIMIZADA
+# 1. BASE DE DATOS COMPLETA (18 EQUIPOS)
 # ==========================================
 @st.cache_data
 def cargar_y_calcular_estadisticas():
-    # Estructura limpia y directa para evitar bloqueos de red en el servidor
+    # Diccionario oficial con todos los equipos de la Liga 1
     db_dinamica = {
-        'Sporting Cristal': {'PJ_L': 5, 'GF_L': 3.00, 'GC_L': 0.80, 'PJ_V': 5, 'GF_V': 1.80, 'GC_V': 1.10},
-        'Sport Huancayo':   {'PJ_L': 5, 'GF_L': 1.50, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.20},
-        'Atlético Grau':    {'PJ_L': 5, 'GF_L': 1.40, 'GC_L': 0.80, 'PJ_V': 5, 'GF_V': 1.50, 'GC_V': 1.00},
-        'Sport Boys':       {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.30, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.00},
-        'Universitario':    {'PJ_L': 5, 'GF_L': 2.40, 'GC_L': 0.40, 'PJ_V': 5, 'GF_V': 1.30, 'GC_V': 0.70},
-        'Alianza Lima':     {'PJ_L': 5, 'GF_L': 2.10, 'GC_L': 0.60, 'PJ_V': 5, 'GF_V': 1.50, 'GC_V': 0.90},
-        'ADT Tarma':        {'PJ_L': 5, 'GF_L': 2.00, 'GC_L': 0.70, 'PJ_V': 5, 'GF_V': 0.80, 'GC_V': 1.60},
-        'CD Moquegua':      {'PJ_L': 5, 'GF_L': 1.00, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.50, 'GC_V': 2.10}
+        'Alianza Lima':       {'PJ_L': 5, 'GF_L': 2.10, 'GC_L': 0.60, 'PJ_V': 5, 'GF_V': 1.50, 'GC_V': 0.90},
+        'Universitario':      {'PJ_L': 5, 'GF_L': 2.40, 'GC_L': 0.40, 'PJ_V': 5, 'GF_V': 1.30, 'GC_V': 0.70},
+        'Sporting Cristal':   {'PJ_L': 5, 'GF_L': 3.00, 'GC_L': 0.80, 'PJ_V': 5, 'GF_V': 1.80, 'GC_V': 1.10},
+        'Melgar':             {'PJ_L': 5, 'GF_L': 2.20, 'GC_L': 0.70, 'PJ_V': 5, 'GF_V': 1.20, 'GC_V': 1.30},
+        'Cienciano':          {'PJ_L': 5, 'GF_L': 1.40, 'GC_L': 1.10, 'PJ_V': 5, 'GF_V': 1.10, 'GC_V': 1.40},
+        'Cusco FC':           {'PJ_L': 5, 'GF_L': 1.70, 'GC_L': 0.90, 'PJ_V': 5, 'GF_V': 0.90, 'GC_V': 1.60},
+        'ADT Tarma':          {'PJ_L': 5, 'GF_L': 2.00, 'GC_L': 0.70, 'PJ_V': 5, 'GF_V': 0.80, 'GC_V': 1.60},
+        'Sport Huancayo':     {'PJ_L': 5, 'GF_L': 1.50, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.20},
+        'Atlético Grau':      {'PJ_L': 5, 'GF_L': 1.40, 'GC_L': 0.80, 'PJ_V': 5, 'GF_V': 1.50, 'GC_V': 1.00},
+        'Los Chankas':        {'PJ_L': 5, 'GF_L': 1.80, 'GC_L': 1.00, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 2.00},
+        'Comerciantes Unidos':{'PJ_L': 5, 'GF_L': 1.30, 'GC_L': 1.40, 'PJ_V': 5, 'GF_V': 1.00, 'GC_V': 2.30},
+        'Sport Boys':         {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.30, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.00},
+        'UTC Cajamarca':      {'PJ_L': 5, 'GF_L': 1.40, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 1.90},
+        'Carlos A. Mannucci': {'PJ_L': 5, 'GF_L': 1.00, 'GC_L': 1.80, 'PJ_V': 5, 'GF_V': 0.80, 'GC_V': 2.40},
+        'César Vallejo':      {'PJ_L': 5, 'GF_L': 1.20, 'GC_L': 1.30, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 1.80},
+        'Alianza Atlético':   {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.00, 'PJ_V': 5, 'GF_V': 0.50, 'GC_V': 1.70},
+        'Unión Comercio':     {'PJ_L': 5, 'GF_L': 1.20, 'GC_L': 2.10, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.50},
+        'Deportivo Garcilaso':{'PJ_L': 5, 'GF_L': 1.30, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.80, 'GC_V': 1.90}
     }
     
     promedio_gf_local = sum(e['GF_L'] for e in db_dinamica.values()) / len(db_dinamica)
@@ -35,9 +45,10 @@ st.set_page_config(page_title="Predicciones Liga 1", page_icon="🏆", layout="c
 st.title("🏆 Sistema de Predicciones - Liga 1")
 st.write("Cálculos matemáticos basados en el modelo de Poisson.")
 
-# Selectores de equipos
-local = st.selectbox("Selecciona Equipo Local:", list(db_equipos.keys()))
-visita = st.selectbox("Selecciona Equipo Visitante:", list(db_equipos.keys()))
+# Selectores de equipos ordenados alfabéticamente
+lista_equipos = sorted(list(db_equipos.keys()))
+local = st.selectbox("Selecciona Equipo Local:", lista_equipos)
+visita = st.selectbox("Selecciona Equipo Visitante:", lista_equipos)
 
 if local != visita:
     # Fórmulas de Fuerza
