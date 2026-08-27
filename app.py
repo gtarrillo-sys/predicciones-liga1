@@ -109,7 +109,7 @@ for local, visita in calendario_fechas[jornada_seleccionada]:
     color_borde = "#28a745" if es_fija else "#007bff"
     
     # --- RENDERIZADO HTML ESTILIZADO DE LA TARJETA ---
-    badge_fija = '<span style="background-color:#ffeeba; color:#b55d00; padding:4px 10px; border-radius:12px; font-weight:bold; font-size:12px; float:right;">🔥 FIJA</span>' if es_fija else ''
+    badge_fija = f'<span style="background-color:#ffeeba; color:#b55d00; padding:4px 10px; border-radius:12px; font-weight:bold; font-size:12px; float:right;">🔥 FIJA</span>' if es_fija else ''
     
     html_card = f"""
     <div style="border-left: 5px solid {color_borde}; background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px;">
@@ -121,7 +121,7 @@ for local, visita in calendario_fechas[jornada_seleccionada]:
             <span style="background-color: #cce5ff; color: #004085; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🔵 Visita: {pct_v}%</span>
         </div>
         <div style="background-color: #e2e8f0; padding: 8px 12px; border-radius: 6px; display: inline-block; color: #334155; font-size:14px;">
-            Resultado calculado: <strong>{local} {marcador_exacto[0]} - {marcador_exacto[1]} {visita}</strong>
+            Resultado calculated: <strong>{local} {marcador_exacto[0]} - {marcador_exacto[1]} {visita}</strong>
         </div>
     </div>
     """
