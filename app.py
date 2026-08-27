@@ -54,11 +54,11 @@ calendario_fechas = {
 }
 
 # ==========================================
-# 3. INTERFAZ VISUAL (DISEÑO PRO IA)
+# 3. INTERFAZ VISUAL (DISEÑO PRO)
 # ==========================================
-st.set_page_config(page_title="LIGA 1 - PREDICTOR PRO IA", page_icon="🏆", layout="centered")
+st.set_page_config(page_title="LIGA 1 - PREDICTOR ESTADÍSTICO", page_icon="🏆", layout="centered")
 
-st.title("🏆 LIGA 1 - PREDICTOR PRO IA")
+st.title("🏆 LIGA 1 - PREDICTOR ESTADÍSTICO")
 st.write("Algoritmo predictivo con sistema visual de detección de alertas y favoritos.")
 
 # Selector de Jornada
@@ -108,21 +108,34 @@ for local, visita in calendario_fechas[jornada_seleccionada]:
     es_fija = pct_l >= 80.0 or pct_v >= 80.0
     color_borde = "#28a745" if es_fija else "#007bff"
     
-    # --- RENDERIZADO HTML ESTILIZADO DE LA TARJETA ---
-    badge_fija = f'<span style="background-color:#ffeeba; color:#b55d00; padding:4px 10px; border-radius:12px; font-weight:bold; font-size:12px; float:right;">🔥 FIJA</span>' if es_fija else ''
+    # --- RENDERIZADO HTML SEGURO ---
+    badge_fija = '<span style="background-color:#ffeeba; color:#b55d00; padding:4px 10px; border-radius:12px; font-weight:bold; font-size:12px; float:right;">🔥 FIJA</span>' if es_fija else ''
     
-    html_card = f"""
-    <div style="border-left: 5px solid {color_borde}; background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px;">
-        {badge_fija}
-        <h3 style="margin-top:0; color:#1e293b; font-size:18px;">🏟️ {local} vs {visita}</h3>
+    # Construcción de plantilla reemplazando valores sin usar f-strings problemáticos
+    html_template = """
+    <div style="border-left: 5px solid COLOR_BORDE; background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px;">
+        BADGE_FIJA
+        <h3 style="margin-top:0; color:#1e293b; font-size:18px;">🏟️ LOCAL vs VISITA</h3>
         <div style="display: flex; gap: 10px; margin-top: 12px; margin-bottom: 15px; flex-wrap: wrap;">
-            <span style="background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🟢 Local: {pct_l}%</span>
-            <span style="background-color: #fff3cd; color: #856404; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🟡 Empate: {pct_e}%</span>
-            <span style="background-color: #cce5ff; color: #004085; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🔵 Visita: {pct_v}%</span>
+            <span style="background-color: #d4edda; color: #155724; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🟢 Local: PCT_L%</span>
+            <span style="background-color: #fff3cd; color: #856404; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🟡 Empate: PCT_E%</span>
+            <span style="background-color: #cce5ff; color: #004085; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size:14px;">🔵 Visita: PCT_V%</span>
         </div>
         <div style="background-color: #e2e8f0; padding: 8px 12px; border-radius: 6px; display: inline-block; color: #334155; font-size:14px;">
-            Resultado calculated: <strong>{local} {marcador_exacto[0]} - {marcador_exacto[1]} {visita}</strong>
+            Resultado calculado: <strong>LOCAL MARCADOR_L - MARCADOR_V VISITA</strong>
         </div>
     </div>
     """
-    st.markdown(html_card, unsafe_allowed_html=True)
+    
+    card_render = html_template\
+        .replace("COLOR_BORDE", str(color_borde))\
+        .replace("BADGE_FIJA", str(badge_fija))\
+        .replace("LOCAL", str(local))\
+        .replace("VISITA", str(visita))\
+        .replace("PCT_L", str(pct_l))\
+        .replace("PCT_E", str(pct_e))\
+        .replace("PCT_V", str(pct_v))\
+        .replace("MARCADOR_L", str(marcador_exacto[0]))\
+        .replace("MARCADOR_V", str(marcador_exacto[1]))
+
+    st.markdown(card_render, unsafe_allowed_html=True)
