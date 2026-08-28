@@ -64,7 +64,7 @@ calendario_mls = {
         ('Colorado Rapids', 'Real Salt Lake'),
         ('San Diego FC', 'LA Galaxy'),
         ('Portland Timbers', 'Austin FC'),
-        ('Columbus Crew', 'New New England')
+        ('Columbus Crew', 'New England')
     ]
 }
 
