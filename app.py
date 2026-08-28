@@ -1,137 +1,164 @@
 import streamlit as st
+import requests
 import pandas as pd
 import numpy as np
 from scipy.stats import poisson
+from datetime import datetime
 
-# ==========================================
-# 1. BASE DE DATOS DE LOS 18 EQUIPOS OFICIALES
-# ==========================================
-@st.cache_data
-def cargar_y_calcular_estadisticas():
-    db_dinamica = {
-        'Alianza Lima':        {'PJ_L': 5, 'GF_L': 2.10, 'GC_L': 0.60, 'PJ_V': 5, 'GF_V': 1.50, 'GC_V': 0.90, 'Region': 'Costa'},
-        'Universitario':       {'PJ_L': 5, 'GF_L': 2.40, 'GC_L': 0.40, 'PJ_V': 5, 'GF_V': 1.30, 'GC_V': 0.70, 'Region': 'Costa'},
-        'Sporting Cristal':    {'PJ_L': 5, 'GF_L': 3.00, 'GC_L': 0.80, 'PJ_V': 5, 'GF_V': 1.80, 'GC_V': 1.10, 'Region': 'Costa'},
-        'Melgar':              {'PJ_L': 5, 'GF_L': 2.20, 'GC_L': 0.70, 'PJ_V': 5, 'GF_V': 1.20, 'GC_V': 1.30, 'Region': 'Altura'},
-        'Cienciano':           {'PJ_L': 5, 'GF_L': 1.40, 'GC_L': 1.10, 'PJ_V': 5, 'GF_V': 1.10, 'GC_V': 1.40, 'Region': 'Altura'},
-        'Cusco FC':            {'PJ_L': 5, 'GF_L': 1.70, 'GC_L': 0.90, 'PJ_V': 5, 'GF_V': 0.90, 'GC_V': 1.60, 'Region': 'Altura'},
-        'ADT Tarma':           {'PJ_L': 5, 'GF_L': 2.00, 'GC_L': 0.70, 'PJ_V': 5, 'GF_V': 0.80, 'GC_V': 1.60, 'Region': 'Altura'},
-        'Sport Huancayo':      {'PJ_L': 5, 'GF_L': 1.50, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.20, 'Region': 'Altura'},
-        'Atlético Grau':       {'PJ_L': 5, 'GF_L': 1.40, 'GC_L': 0.80, 'PJ_V': 5, 'GF_V': 1.50, 'GC_V': 1.00, 'Region': 'Norte'},
-        'Los Chankas':         {'PJ_L': 5, 'GF_L': 1.80, 'GC_L': 1.00, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 2.00, 'Region': 'Altura'},
-        'Comerciantes Unidos': {'PJ_L': 5, 'GF_L': 1.30, 'GC_L': 1.40, 'PJ_V': 5, 'GF_V': 1.00, 'GC_V': 2.30, 'Region': 'Altura'},
-        'Sport Boys':          {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.30, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.00, 'Region': 'Costa'},
-        'UTC':                 {'PJ_L': 5, 'GF_L': 1.40, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 1.90, 'Region': 'Altura'},
-        'FC Cajamarca':        {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.50, 'PJ_V': 5, 'GF_V': 0.60, 'GC_V': 2.10, 'Region': 'Altura'},
-        'CD Moquegua':         {'PJ_L': 5, 'GF_L': 1.20, 'GC_L': 1.30, 'PJ_V': 5, 'GF_V': 0.70, 'GC_V': 1.80, 'Region': 'Costa'},
-        'Alianza Atlético':    {'PJ_L': 5, 'GF_L': 1.10, 'GC_L': 1.00, 'PJ_V': 5, 'GF_V': 0.50, 'GC_V': 1.70, 'Region': 'Norte'},
-        'Juan Pablo II':       {'PJ_L': 5, 'GF_L': 0.90, 'GC_L': 1.80, 'PJ_V': 5, 'GF_V': 0.50, 'GC_V': 2.40, 'Region': 'Norte'},
-        'Deportivo Garcilaso': {'PJ_L': 5, 'GF_L': 1.30, 'GC_L': 1.20, 'PJ_V': 5, 'GF_V': 0.80, 'GC_V': 1.90, 'Region': 'Altura'}
-    }
-    prom_gf_l = sum(e['GF_L'] for e in db_dinamica.values()) / len(db_dinamica)
-    prom_gc_l = sum(e['GC_L'] for e in db_dinamica.values()) / len(db_dinamica)
-    return db_dinamica, prom_gf_l, prom_gc_l
+# Configuración de cabeceras para la API (Mantenemos la misma estructura por si deseas vincularla)
+API_KEY = "cee4cebcd9msh82842660a6a542cp1710c9jsnfc3990e9eac0"
+API_HOST = "free-api-live-football-data.p.rapidapi.com"
 
-db_equipos, prom_gf_l, prom_gc_l = cargar_y_calcular_estadisticas()
-
-# ==========================================
-# 2. CALENDARIO REAL DE PARTIDOS
-# ==========================================
-calendario_fechas = {
-    'Jornada 7': [
-        ('Comerciantes Unidos', 'FC Cajamarca'),
-        ('Los Chankas', 'Juan Pablo II'),
-        ('UTC', 'Universitario'),
-        ('Alianza Lima', 'Deportivo Garcilaso'),
-        ('CD Moquegua', 'Alianza Atlético'),
-        ('ADT Tarma', 'Sport Huancayo'),
-        ('Sport Boys', 'Sporting Cristal'),
-        ('Cienciano', 'Cusco FC'),
-        ('Atlético Grau', 'Melgar')
-    ]
+headers = {
+    "X-RapidAPI-Key": API_KEY,
+    "X-RapidAPI-Host": API_HOST
 }
 
-# ==========================================
-# 3. INTERFAZ VISUAL NATIVA
-# ==========================================
-st.set_page_config(page_title="LIGA 1 - PREDICTOR ESTADÍSTICO", page_icon="🏆", layout="centered")
+LIGA1_LEAGUE_ID = 281  # ID referencial para Perú
+TEMPORADA_ACTUAL = 2026
 
-st.title("🏆 LIGA 1 - PREDICTOR ESTADÍSTICO")
-st.write("Algoritmo predictivo con factores climáticos: Altura y Calor del Norte.")
+# =========================================================
+# BASE DE DATOS CALIBRADA: CONTEXTO GEOGRÁFICO LIGA 1
+# =========================================================
+def obtener_base_respaldo_peru():
+    # GF_L/GC_L y GF_V/GC_V calibrados según la tendencia histórica del fútbol peruano
+    # Geografía: Costa, Altura, Selva
+    # Acceso: Normal, Dificil (Tramos largos de bus / Sin aeropuerto directo)
+    return {
+        'Universitario': {'PJ_L': 8, 'GF_L': 2.40, 'GC_L': 0.50, 'PJ_V': 8, 'GF_V': 1.30, 'GC_V': 0.90, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Alianza Lima': {'PJ_L': 8, 'GF_L': 2.20, 'GC_L': 0.60, 'PJ_V': 8, 'GF_V': 1.40, 'GC_V': 0.85, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Sporting Cristal': {'PJ_L': 8, 'GF_L': 2.80, 'GC_L': 0.80, 'PJ_V': 8, 'GF_V': 1.50, 'GC_V': 1.10, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Melgar': {'PJ_L': 8, 'GF_L': 2.10, 'GC_L': 0.70, 'PJ_V': 8, 'GF_V': 1.10, 'GC_V': 1.20, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Cienciano': {'PJ_L': 8, 'GF_L': 1.80, 'GC_L': 0.85, 'PJ_V': 8, 'GF_V': 0.90, 'GC_V': 1.40, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'ADT Tarma': {'PJ_L': 8, 'GF_L': 1.95, 'GC_L': 0.65, 'PJ_V': 8, 'GF_V': 0.80, 'GC_V': 1.60, 'Geografia': 'Altura', 'Pasto': 'Union', 'Acceso': 'Dificil'},
+        'Comerciantes Unidos': {'PJ_L': 8, 'GF_L': 1.60, 'GC_L': 1.10, 'PJ_V': 8, 'GF_V': 0.85, 'GC_V': 1.90, 'Geografia': 'Altura', 'Pasto': 'Sintetico', 'Acceso': 'Dificil'},
+        'Los Chankas': {'PJ_L': 8, 'GF_L': 2.00, 'GC_L': 0.90, 'PJ_V': 8, 'GF_V': 0.70, 'GC_V': 1.80, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Dificil'},
+        'Sport Huancayo': {'PJ_L': 8, 'GF_L': 1.70, 'GC_L': 0.80, 'PJ_V': 8, 'GF_V': 0.75, 'GC_V': 1.70, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Cusco FC': {'PJ_L': 8, 'GF_L': 1.90, 'GC_L': 0.75, 'PJ_V': 8, 'GF_V': 0.80, 'GC_V': 1.50, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Atlético Grau': {'PJ_L': 8, 'GF_L': 1.65, 'GC_L': 0.80, 'PJ_V': 8, 'GF_V': 1.00, 'GC_V': 1.30, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Alianza Atlético': {'PJ_L': 8, 'GF_L': 1.40, 'GC_L': 0.90, 'PJ_V': 8, 'GF_V': 0.75, 'GC_V': 1.50, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'UTC Cajamarca': {'PJ_L': 8, 'GF_L': 1.60, 'GC_L': 1.00, 'PJ_V': 8, 'GF_V': 0.70, 'GC_V': 1.85, 'Geografia': 'Altura', 'Pasto': 'Sintetico', 'Acceso': 'Normal'},
+        'Carlos A. Mannucci': {'PJ_L': 8, 'GF_L': 1.30, 'GC_L': 1.40, 'PJ_V': 8, 'GF_V': 0.80, 'GC_V': 2.10, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'César Vallejo': {'PJ_L': 8, 'GF_L': 1.50, 'GC_L': 1.10, 'PJ_V': 8, 'GF_V': 0.85, 'GC_V': 1.75, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Sport Boys': {'PJ_L': 8, 'GF_L': 1.45, 'GC_L': 1.20, 'PJ_V': 8, 'GF_V': 0.70, 'GC_V': 2.00, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
+        'Unión Comercio': {'PJ_L': 8, 'GF_L': 1.35, 'GC_L': 1.80, 'PJ_V': 8, 'GF_V': 0.80, 'GC_V': 2.50, 'Geografia': 'Selva', 'Pasto': 'Natural', 'Acceso': 'Dificil'},
+        'Deportivo Garcilaso': {'PJ_L': 8, 'GF_L': 1.75, 'GC_L': 1.00, 'PJ_V': 8, 'GF_V': 0.85, 'GC_V': 1.65, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'}
+    }
 
-jornada_seleccionada = st.selectbox("📅 Selecciona la Fecha del Torneo:", list(calendario_fechas.keys()))
-st.markdown("---")
+# =========================================================
+# OBTENER FIXTURE DE LA JORNADA PERUANA
+# =========================================================
+def obtener_partidos_peru():
+    # Cartelera de partidos ajustable por fecha para análisis directo
+    return [
+        {"local": "Comerciantes Unidos", "visita": "Universitario", "fecha": "Sábado", "hora": "15:30"},
+        {"local": "Alianza Lima", "visita": "ADT Tarma", "fecha": "Sábado", "hora": "20:00"},
+        {"local": "Melgar", "visita": "Sporting Cristal", "fecha": "Domingo", "hora": "13:00"},
+        {"local": "Los Chankas", "visita": "Sport Boys", "fecha": "Domingo", "hora": "15:30"},
+        {"local": "UTC Cajamarca", "visita": "César Vallejo", "fecha": "Lunes", "hora": "15:00"},
+        {"local": "Cusco FC", "visita": "Alianza Atlético", "fecha": "Lunes", "hora": "18:00"}
+    ]
 
-for local, visita in calendario_fechas[jornada_seleccionada]:
-    
-    reg_local = db_equipos[local]['Region']
-    reg_visita = db_equipos[visita]['Region']
-    
-    # --- MODIFICADORES GEOGRÁFICOS ---
-    factor_ataque_visita = 1.0
-    factor_defensa_local = 1.0
-    alerta_clima = ""
+# =========================================================
+# INTERFAZ GRÁFICA DE STREAMLIT
+# =========================================================
+st.set_page_config(page_title="Liga 1 Context Predictor", page_icon="🇵🇪", layout="centered")
+st.title("🇵🇪 LIGA 1 — ANALIZADOR GEOGRÁFICO AISLADO")
+st.caption("Predicciones optimizadas para el fútbol peruano: Altura, efecto viaje en bus y césped.")
 
-    if reg_local == 'Altura' and reg_visita != 'Altura':
-        factor_ataque_visita = 0.75
-        factor_defensa_local = 0.85
-        alerta_clima = "🏔️ **Alerta:** Factor Altura activo"
-    elif reg_local == 'Norte' and reg_visita != 'Norte':
-        factor_ataque_visita = 0.85
-        alerta_clima = "☀️ **Alerta:** Factor Calor del Norte activo"
+db_equipos = obtener_base_respaldo_peru()
+partidos_jornada = obtener_partidos_peru()
 
-    # --- CÁLCULOS MATEMÁTICOS DE POISSON ---
-    fuerza_of_l = db_equipos[local]['GF_L'] / prom_gf_l
-    fuerza_def_v = db_equipos[visita]['GC_V'] / prom_gf_l
-    lambda_local = fuerza_of_l * fuerza_def_v * prom_gf_l * (1 / factor_defensa_local)
-    
-    fuerza_of_v = db_equipos[visita]['GF_V'] / prom_gc_l
-    fuerza_def_l = db_equipos[local]['GC_L'] / prom_gc_l
-    lambda_visita = fuerza_of_v * fuerza_def_l * prom_gc_l * factor_ataque_visita
-    
-    max_goles = 6
-    p_local = [poisson.pmf(i, lambda_local) for i in range(max_goles)]
-    p_visita = [poisson.pmf(i, lambda_visita) for i in range(max_goles)]
-    
-    prob_l, prob_e, prob_v = 0.0, 0.0, 0.0
-    max_prob_marcador = -1
-    marcador_exacto = (0, 0)
-    
-    for i in range(max_goles):
-        for j in range(max_goles):
-            p_combinada = p_local[i] * p_visita[j]
-            if i > j: prob_l += p_combinada
-            elif i == j: prob_e += p_combinada
-            else: prob_v += p_combinada
+tab1, tab2 = st.tabs(["📅 Predicciones de la Fecha", "🏔️ Matriz de Climas"])
+
+with tab1:
+    for partido in partidos_jornada:
+        local, visita = partido['local'], partido['visita']
+        if local not in db_equipos or visita not in db_equipos: continue
             
-            if p_combinada > max_prob_marcador:
-                max_prob_marcador = p_combinada
-                marcador_exacto = (i, j)
-                
-    total = prob_l + prob_e + prob_v
-    pct_l = round((prob_l / total) * 100, 1)
-    pct_e = round((prob_e / total) * 100, 1)
-    pct_v = round((prob_v / total) * 100, 1)
+        factor_ataque_visita = 1.0
+        factor_defensa_local = 1.0
+        alertas = []
+        
+        # 1. EL FACTOR REY: SHOCK DE ALTURA / OXÍGENO
+        geo_l = db_equipos[local]['Geografia']
+        geo_v = db_equipos[visita]['Geografia']
+        
+        if geo_l == 'Altura' and geo_v == 'Costa':
+            # Equipo de la Costa sufre un bajón físico severo en la altura (Cusco, Tarma, Cutervo, etc.)
+            factor_ataque_visita *= 0.78  # Pierde un 22% de capacidad ofensiva por falta de aire
+            alertas.append(f"🏔️🥵 **Shock Hipóxico (Altura):** {visita} (Costa) sube a la altura de {local}. Ventaja física local determinante.")
+        elif geo_l == 'Costa' and geo_v == 'Altura':
+            # Los equipos de altura perdiendo el plus geográfico al bajar al llano
+            factor_ataque_visita *= 0.92  # Pierden ligera adaptabilidad en velocidad de balón
+            alertas.append(f"🌊 **Bajada al Llano:** {visita} pierde su ventaja de altura al jugar en la costa frente a {local}.")
+        elif geo_l == 'Selva' and geo_v == 'Costa':
+            # El factor del calor sofocante e intenso de la selva (Tarapoto)
+            factor_ataque_visita *= 0.85
+            alertas.append(f"🌴☀️ **Calor de Selva:** {visita} expuesto a la alta temperatura y humedad de {local}.")
+
+        # 2. EL EFECTO VIAJE EN CARRETERA (Caso Cutervo, Andahuaylas, Tarma)
+        if db_equipos[local]['Acceso'] == 'Dificil' and db_equipos[visita]['Acceso'] == 'Normal':
+            factor_ataque_visita *= 0.90  # 10% de penalización por acumulación de horas en bus
+            alertas.append(f"🚌 **Desgaste por Carretera (Efecto Bus):** Ruta compleja de acceso para {visita} para llegar a {local}.")
+
+        # 3. VARIABLE DE SUPERFICIE (Césped Sintético)
+        if db_equipos[local]['Pasto'] == 'Sintetico':
+            factor_defensa_local *= 0.90  # El local domina el rebote rápido del balón plástico
+            alertas.append("👟 **Césped Artificial:** Ventaja táctica local por control del bote rápido.")
+
+        # =========================================================
+        # CÁLCULO DIRECTO AISLADO (SIN PROMEDIOS DE LIGA)
+        # =========================================================
+        lambda_local = (db_equipos[local]['GF_L'] + db_equipos[visita]['GC_V']) / 2.0
+        lambda_local = lambda_local / factor_defensa_local  # Potencia al local
+        
+        lambda_visita = (db_equipos[visita]['GF_V'] + db_equipos[local]['GC_L']) / 2.0
+        lambda_visita = lambda_visita * factor_ataque_visita  # Castiga a la visita por geografía
+
+        # Distribución de Poisson para el cálculo de probabilidades
+        p_local = [poisson.pmf(i, lambda_local) for i in range(6)]
+        p_visita = [poisson.pmf(i, lambda_visita) for i in range(6)]
+        
+        prob_l, prob_e, prob_v, prob_under = 0.0, 0.0, 0.0, 0.0
+        for i in range(6):
+            for j in range(6):
+                p_comb = p_local[i] * p_visita[j]
+                if i > j: prob_l += p_comb
+                elif i == j: prob_e += p_comb
+                else: prob_v += p_comb
+                if (i + j) < 3: prob_under += p_comb
+        
+        total_p = prob_l + prob_e + prob_v
+        pct_l = round((prob_l / total_p) * 100, 1)
+        pct_e = round((prob_e / total_p) * 100, 1)
+        pct_v = round((prob_v / total_p) * 100, 1)
+        pct_over = round((1.0 - prob_under) * 100, 1)
+        pct_under_f = round(prob_under * 100, 1)
+        
+        # Despliegue visual de la tarjeta del partido
+        with st.container(border=True):
+            st.caption(f"📅 {partido['fecha']} — ⏰ {partido['hora']}")
+            titulo_fija = " 🔥 FIJA DE VALOR" if pct_l >= 70.0 or pct_v >= 70.0 else ""
+            st.markdown(f"### 🏟️ {local} vs {visita}{titulo_fija}")
+            
+            for a in alertas: 
+                st.markdown(a)
+            
+            st.markdown("**📊 Probabilidades de Resultado:**")
+            col1, col2, col3 = st.columns(3)
+            col1.success(f"🟢 Local: {pct_l}%")
+            col2.warning(f"🟡 Empate: {pct_e}%")
+            col3.info(f"🔵 Visita: {pct_v}%")
+            
+            st.markdown("**⚽ Goles (Línea de 2.5):**")
+            col_g1, col_g2 = st.columns(2)
+            col_g1.markdown(f"📈 **Más de 2.5 (Over):** {pct_over}%" + (" 🔥" if pct_over >= 70 else ""))
+            col_g2.markdown(f"📉 **Menos de 2.5 (Under):** {pct_under_f}%")
+
+with tab2:
+    st.info("### 🗺️ Configuración del Mapa Geográfico de la Liga 1")
+    st.write("El sistema evalúa el desgaste físico según la localía de los clubes peruanos:")
     
-    es_fija = pct_l >= 80.0 or pct_v >= 80.0
-    
-    # --- RENDERIZADO VISUAL ---
-    with st.container(border=True):
-        if es_fija:
-            st.markdown(f"### 🏟️ {local} vs {visita} :orange[**🔥 FIJA**]")
-        else:
-            st.markdown(f"### 🏟️ {local} vs {visita}")
-            
-        if alerta_clima:
-            st.caption(alerta_clima)
-            
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.success(f"🟢 Local: {pct_l}%")
-        with col2:
-            st.warning(f"🟡 Empate: {pct_e}%")
-        with col3:
-            st.info(f"🔵 Visita: {pct_v}%")
-            
-        st.markdown(f"**Resultado calculated:** `{local} {marcador_exacto[0]} - {marcador_exacto[1]} {visita}`")
-        st.write("")
+    df_mostrar = pd.DataFrame.from_dict(db_equipos, orient='index')[['Geografia', 'Pasto', 'Acceso']]
+    st.dataframe(df_mostrar, height=400)
