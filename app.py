@@ -1,48 +1,115 @@
 import streamlit as st
-import requests
 import pandas as pd
 import numpy as np
 from scipy.stats import poisson
-from datetime import datetime
-
-# Configuración referencial
-API_KEY = "cee4cebcd9msh82842660a6a542cp1710c9jsnfc3990e9eac0"
-API_HOST = "free-api-live-football-data.p.rapidapi.com"
-
-headers = {
-    "X-RapidAPI-Key": API_KEY,
-    "X-RapidAPI-Host": API_HOST
-}
 
 # =========================================================
-# BASE DE DATOS GEOGRÁFICA DE LA LIGA 1 (TODOS LOS EQUIPOS)
+# BASE DE DATOS SEGMENTADA POR CONTEXTO Y JERARQUÍA
 # =========================================================
-def obtener_base_respaldo_peru():
+def obtener_base_respaldo_peru_avanzada():
+    # GF_L_vs_Costa / GC_L_vs_Costa: Cuando recibe a un costeño
+    # GF_L_vs_Altura / GC_L_vs_Altura: Cuando recibe a uno de altura
+    # GF_V_en_Costa / GC_V_en_Costa: Cuando visita la costa
+    # GF_V_en_Altura / GC_V_en_Altura: Cuando visita la altura
+    # Jerarquia: True (Fuerza ofensiva invariable de visita)
     return {
-        'Universitario': {'PJ_L': 8, 'GF_L': 2.40, 'GC_L': 0.50, 'PJ_V': 8, 'GF_V': 1.30, 'GC_V': 0.90, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Alianza Lima': {'PJ_L': 8, 'GF_L': 2.20, 'GC_L': 0.60, 'PJ_V': 8, 'GF_V': 1.40, 'GC_V': 0.85, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Sporting Cristal': {'PJ_L': 8, 'GF_L': 2.80, 'GC_L': 0.80, 'PJ_V': 8, 'GF_V': 1.50, 'GC_V': 1.10, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Melgar': {'PJ_L': 8, 'GF_L': 2.10, 'GC_L': 0.70, 'PJ_V': 8, 'GF_V': 1.10, 'GC_V': 1.20, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Cienciano': {'PJ_L': 8, 'GF_L': 1.80, 'GC_L': 0.85, 'PJ_V': 8, 'GF_V': 0.90, 'GC_V': 1.40, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Cusco FC': {'PJ_L': 8, 'GF_L': 1.90, 'GC_L': 0.75, 'PJ_V': 8, 'GF_V': 0.80, 'GC_V': 1.50, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Deportivo Garcilaso': {'PJ_L': 8, 'GF_L': 1.75, 'GC_L': 1.00, 'PJ_V': 8, 'GF_V': 0.85, 'GC_V': 1.65, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'ADT Tarma': {'PJ_L': 8, 'GF_L': 1.95, 'GC_L': 0.65, 'PJ_V': 8, 'GF_V': 0.80, 'GC_V': 1.60, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Dificil'},
-        'Sport Huancayo': {'PJ_L': 8, 'GF_L': 1.70, 'GC_L': 0.80, 'PJ_V': 8, 'GF_V': 0.75, 'GC_V': 1.70, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Comerciantes Unidos': {'PJ_L': 8, 'GF_L': 1.60, 'GC_L': 1.10, 'PJ_V': 8, 'GF_V': 0.85, 'GC_V': 1.90, 'Geografia': 'Altura', 'Pasto': 'Sintetico', 'Acceso': 'Dificil'},
-        'UTC Cajamarca': {'PJ_L': 8, 'GF_L': 1.60, 'GC_L': 1.00, 'PJ_V': 8, 'GF_V': 0.70, 'GC_V': 1.85, 'Geografia': 'Altura', 'Pasto': 'Sintetico', 'Acceso': 'Normal'},
-        'FC Cajamarca': {'PJ_L': 8, 'GF_L': 1.50, 'GC_L': 1.10, 'PJ_V': 8, 'GF_V': 0.80, 'GC_V': 1.75, 'Geografia': 'Altura', 'Pasto': 'Sintetico', 'Acceso': 'Normal'},
-        'Los Chankas': {'PJ_L': 8, 'GF_L': 2.00, 'GC_L': 0.90, 'PJ_V': 8, 'GF_V': 0.70, 'GC_V': 1.80, 'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Dificil'},
-        'Atlético Grau': {'PJ_L': 8, 'GF_L': 1.65, 'GC_L': 0.80, 'PJ_V': 8, 'GF_V': 1.00, 'GC_V': 1.30, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Alianza Atlético': {'PJ_L': 8, 'GF_L': 1.40, 'GC_L': 0.90, 'PJ_V': 8, 'GF_V': 0.75, 'GC_V': 1.50, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Sport Boys': {'PJ_L': 8, 'GF_L': 1.45, 'GC_L': 1.20, 'PJ_V': 8, 'GF_V': 0.70, 'GC_V': 2.00, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'César Vallejo': {'PJ_L': 8, 'GF_L': 1.50, 'GC_L': 1.10, 'PJ_V': 8, 'GF_V': 0.85, 'GC_V': 1.75, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Juan Pablo II College': {'PJ_L': 8, 'GF_L': 1.40, 'GC_L': 1.20, 'PJ_V': 8, 'GF_V': 0.80, 'GC_V': 1.90, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'},
-        'Deportivo Moquegua': {'PJ_L': 8, 'GF_L': 1.35, 'GC_L': 1.15, 'PJ_V': 8, 'GF_V': 0.75, 'GC_V': 2.00, 'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal'}
+        'Universitario': {
+            'GF_L_vs_Costa': 2.50, 'GC_L_vs_Costa': 0.40, 'GF_L_vs_Altura': 2.30, 'GC_L_vs_Altura': 0.60,
+            'GF_V_en_Costa': 1.60, 'GC_V_en_Costa': 0.80, 'GF_V_en_Altura': 1.10, 'GC_V_en_Altura': 1.00,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': True
+        },
+        'Alianza Lima': {
+            'GF_L_vs_Costa': 2.30, 'GC_L_vs_Costa': 0.50, 'GF_L_vs_Altura': 2.10, 'GC_L_vs_Altura': 0.70,
+            'GF_V_en_Costa': 1.50, 'GC_V_en_Costa': 0.80, 'GF_V_en_Altura': 1.20, 'GC_V_en_Altura': 0.90,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': True
+        },
+        'Sporting Cristal': {
+            'GF_L_vs_Costa': 2.90, 'GC_L_vs_Costa': 0.70, 'GF_L_vs_Altura': 2.70, 'GC_L_vs_Altura': 0.90,
+            'GF_V_en_Costa': 1.80, 'GC_V_en_Costa': 1.00, 'GF_V_en_Altura': 1.30, 'GC_V_en_Altura': 1.20,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': True
+        },
+        'Sport Boys': {
+            'GF_L_vs_Costa': 1.60, 'GC_L_vs_Costa': 1.10, 'GF_L_vs_Altura': 1.30, 'GC_L_vs_Altura': 1.30,
+            'GF_V_en_Costa': 0.80, 'GC_V_en_Costa': 1.80, 'GF_V_en_Altura': 0.50, 'GC_V_en_Altura': 2.20,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Melgar': {
+            'GF_L_vs_Costa': 2.40, 'GC_L_vs_Costa': 0.60, 'GF_L_vs_Altura': 1.90, 'GC_L_vs_Altura': 0.80,
+            'GF_V_en_Costa': 1.20, 'GC_V_en_Costa': 1.10, 'GF_V_en_Altura': 1.00, 'GC_V_en_Altura': 1.30,
+            'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Comerciantes Unidos': {
+            'GF_L_vs_Costa': 1.80, 'GC_L_vs_Costa': 1.00, 'GF_L_vs_Altura': 1.40, 'GC_L_vs_Altura': 1.20,
+            'GF_V_en_Costa': 0.90, 'GC_V_en_Costa': 2.10, 'GF_V_en_Altura': 0.80, 'GC_V_en_Altura': 1.70,
+            'Geografia': 'Altura', 'Pasto': 'Sintetico', 'Acceso': 'Dificil', 'Jerarquia': False
+        },
+        'FC Cajamarca': {
+            'GF_L_vs_Costa': 1.60, 'GC_L_vs_Costa': 1.00, 'GF_L_vs_Altura': 1.40, 'GC_L_vs_Altura': 1.20,
+            'GF_V_en_Costa': 0.85, 'GC_V_en_Costa': 1.90, 'GF_V_en_Altura': 0.75, 'GC_V_en_Altura': 1.60,
+            'Geografia': 'Altura', 'Pasto': 'Sintetico', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Los Chankas': {
+            'GF_L_vs_Costa': 2.20, 'GC_L_vs_Costa': 0.80, 'GF_L_vs_Altura': 1.80, 'GC_L_vs_Altura': 1.00,
+            'GF_V_en_Costa': 0.70, 'GC_V_en_Costa': 2.00, 'GF_V_en_Altura': 0.70, 'GC_V_en_Altura': 1.60,
+            'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Dificil', 'Jerarquia': False
+        },
+        'Juan Pablo II College': {
+            'GF_L_vs_Costa': 1.50, 'GC_L_vs_Costa': 1.10, 'GF_L_vs_Altura': 1.30, 'GC_L_vs_Altura': 1.30,
+            'GF_V_en_Costa': 0.80, 'GC_V_en_Costa': 1.80, 'GF_V_en_Altura': 0.70, 'GC_V_en_Altura': 2.00,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'UTC Cajamarca': {
+            'GF_L_vs_Costa': 1.80, 'GC_L_vs_Costa': 0.90, 'GF_L_vs_Altura': 1.40, 'GC_L_vs_Altura': 1.10,
+            'GF_V_en_Costa': 0.75, 'GC_V_en_Costa': 2.00, 'GF_V_en_Altura': 0.65, 'GC_V_en_Altura': 1.70,
+            'Geografia': 'Altura', 'Pasto': 'Sintetico', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Deportivo Garcilaso': {
+            'GF_L_vs_Costa': 1.90, 'GC_L_vs_Costa': 0.90, 'GF_L_vs_Altura': 1.60, 'GC_L_vs_Altura': 1.10,
+            'GF_V_en_Costa': 0.90, 'GC_V_en_Costa': 1.80, 'GF_V_en_Altura': 0.80, 'GC_V_en_Altura': 1.50,
+            'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Deportivo Moquegua': {
+            'GF_L_vs_Costa': 1.40, 'GC_L_vs_Costa': 1.10, 'GF_L_vs_Altura': 1.30, 'GC_L_vs_Altura': 1.20,
+            'GF_V_en_Costa': 0.75, 'GC_V_en_Costa': 2.10, 'GF_V_en_Altura': 0.70, 'GC_V_en_Altura': 1.90,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Alianza Atlético': {
+            'GF_L_vs_Costa': 1.50, 'GC_L_vs_Costa': 0.85, 'GF_L_vs_Altura': 1.30, 'GC_L_vs_Altura': 0.95,
+            'GF_V_en_Costa': 0.80, 'GC_V_en_Costa': 1.60, 'GF_V_en_Altura': 0.70, 'GC_V_en_Altura': 1.40,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'ADT Tarma': {
+            'GF_L_vs_Costa': 2.10, 'GC_L_vs_Costa': 0.60, 'GF_L_vs_Altura': 1.80, 'GC_L_vs_Altura': 0.70,
+            'GF_V_en_Costa': 0.90, 'GC_V_en_Costa': 1.50, 'GF_V_en_Altura': 0.70, 'GC_V_en_Altura': 1.70,
+            'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Dificil', 'Jerarquia': False
+        },
+        'Sport Huancayo': {
+            'GF_L_vs_Costa': 1.85, 'GC_L_vs_Costa': 0.75, 'GF_L_vs_Altura': 1.55, 'GC_L_vs_Altura': 0.85,
+            'GF_V_en_Costa': 0.80, 'GC_V_en_Costa': 1.80, 'GF_V_en_Altura': 0.70, 'GC_V_en_Altura': 1.60,
+            'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'César Vallejo': {
+            'GF_L_vs_Costa': 1.60, 'GC_L_vs_Costa': 1.00, 'GF_L_vs_Altura': 1.40, 'GC_L_vs_Altura': 1.20,
+            'GF_V_en_Costa': 0.90, 'GC_V_en_Costa': 1.60, 'GF_V_en_Altura': 0.80, 'GC_V_en_Altura': 1.90,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Cienciano': {
+            'GF_L_vs_Costa': 1.95, 'GC_L_vs_Costa': 0.80, 'GF_L_vs_Altura': 1.65, 'GC_L_vs_Altura': 0.90,
+            'GF_V_en_Costa': 1.00, 'GC_V_en_Costa': 1.30, 'GF_V_en_Altura': 0.80, 'GC_V_en_Altura': 1.50,
+            'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Cusco FC': {
+            'GF_L_vs_Costa': 2.00, 'GC_L_vs_Costa': 0.70, 'GF_L_vs_Altura': 1.80, 'GC_L_vs_Altura': 0.80,
+            'GF_V_en_Costa': 0.85, 'GC_V_en_Costa': 1.60, 'GF_V_en_Altura': 0.75, 'GC_V_en_Altura': 1.40,
+            'Geografia': 'Altura', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        },
+        'Atlético Grau': {
+            'GF_L_vs_Costa': 1.70, 'GC_L_vs_Costa': 0.75, 'GF_L_vs_Altura': 1.60, 'GC_L_vs_Altura': 0.85,
+            'GF_V_en_Costa': 1.10, 'GC_V_en_Costa': 1.20, 'GF_V_en_Altura': 0.90, 'GC_V_en_Altura': 1.40,
+            'Geografia': 'Costa', 'Pasto': 'Natural', 'Acceso': 'Normal', 'Jerarquia': False
+        }
     }
 
-# =========================================================
-# FIXTURE REAL FIEL A GOOGLE SEARCH (ACTUALIZADO)
-# =========================================================
 def obtener_partidos_peru():
     return [
         {"local": "Comerciantes Unidos", "visita": "FC Cajamarca", "fecha": "Viernes", "hora": "15:00"},
@@ -56,94 +123,90 @@ def obtener_partidos_peru():
         {"local": "Atlético Grau", "visita": "Melgar", "fecha": "Lunes", "hora": "15:00"}
     ]
 
-# =========================================================
-# INTERFAZ GRÁFICA DE STREAMLIT
-# =========================================================
-st.set_page_config(page_title="Liga 1 Context Predictor", page_icon="🇵🇪", layout="centered")
-st.title("🇵🇪 LIGA 1 — ANALIZADOR GEOGRÁFICO AISLADO")
-st.caption("Predicciones optimizadas para el fútbol peruano: Altura, efecto viaje en bus y césped.")
+# INTERFAZ STREAMLIT
+st.set_page_config(page_title="Liga 1 Predictor V2", page_icon="🇵🇪", layout="centered")
+st.title("🇵🇪 LIGA 1 METRIC PRO — CONTEXTO & JERARQUÍA")
+st.caption("Evolución: Datos segmentados por origen geográfico y Plus de Jerarquía Histórica.")
 
-db_equipos = obtener_base_respaldo_peru()
+db_equipos = obtener_base_respaldo_peru_avanzada()
 partidos_jornada = obtener_partidos_peru()
 
-tab1, tab2 = st.tabs(["📅 Predicciones de la Fecha", "🏔️ Matriz de Climas"])
-
-with tab1:
-    for partido in partidos_jornada:
-        local, visita = partido['local'], partido['visita']
-        if local not in db_equipos or visita not in db_equipos: continue
-            
-        factor_ataque_visita = 1.0
-        factor_defensa_local = 1.0
-        alertas = []
+for partido in partidos_jornada:
+    local, visita = partido['local'], partido['visita']
+    if local not in db_equipos or visita not in db_equipos: continue
         
-        geo_l = db_equipos[local]['Geografia']
-        geo_v = db_equipos[visita]['Geografia']
+    geo_l = db_equipos[local]['Geografia']
+    geo_v = db_equipos[visita]['Geografia']
+    
+    # SELECCIÓN DINÁMICA DE LA MUESTRA SEGÚN GEOGRAFÍA DEL RIVAL
+    if geo_v == 'Costa':
+        gf_local_segmentado = db_equipos[local]['GF_L_vs_Costa']
+        gc_local_segmentado = db_equipos[local]['GC_L_vs_Costa']
+    else:
+        gf_local_segmentado = db_equipos[local]['GF_L_vs_Altura']
+        gc_local_segmentado = db_equipos[local]['GC_L_vs_Altura']
         
-        # 1. EVALUACIÓN DE SHOCK DE ALTURA / OXÍGENO
-        if geo_l == 'Altura' and geo_v == 'Costa':
-            factor_ataque_visita *= 0.78  
-            alertas.append(f"🏔️🥵 **Shock Hipóxico (Altura):** {visita} (Costa) sube a la altura de {local}. Ventaja física local.")
-        elif geo_l == 'Costa' and geo_v == 'Altura':
-            factor_ataque_visita *= 0.92  
-            alertas.append(f"🌊 **Bajada al Llano:** {visita} pierde su ventaja de altura al jugar en la costa frente a {local}.")
+    if geo_l == 'Costa':
+        gf_visita_segmentado = db_equipos[visita]['GF_V_en_Costa']
+        gc_visita_segmentado = db_equipos[visita]['GC_V_en_Costa']
+    else:
+        gf_visita_segmentado = db_equipos[visita]['GF_V_en_Altura']
+        gc_visita_segmentado = db_equipos[visita]['GC_V_en_Altura']
 
-        # 2. EL EFECTO VIAJE EN CARRETERA (Bus largo)
-        if db_equipos[local]['Acceso'] == 'Dificil' and db_equipos[visita]['Acceso'] == 'Normal':
-            factor_ataque_visita *= 0.90  
-            alertas.append(f"🚌 **Desgaste por Carretera (Efecto Bus):** Ruta compleja de acceso para {visita} para llegar a {local}.")
+    # INYECCIÓN DEL FACTOR JERARQUÍA (U, Alianza, Cristal)
+    plus_jerarquia_ataque = 1.0
+    alertas = []
+    
+    if db_equipos[visita]['Jerarquia']:
+        plus_jerarquia_ataque = 1.15  # Plus de 15% de poder ofensivo porque saldrán a proponer sí o sí
+        alertas.append(f"👑 **Efecto Jerarquía:** {visita} es un equipo grande. Su propuesta táctica externa es ofensiva e invariable.")
 
-        # 3. VARIABLE DE SUPERFICIE (Césped Sintético)
-        if db_equipos[local]['Pasto'] == 'Sintetico':
-            factor_defensa_local *= 0.90  
-            alertas.append("👟 **Césped Artificial:** Ventaja táctica local por control del bote rápido.")
+    # APLICACIÓN DE AGRESIVIDAD GEOGRÁFICA NATURAL
+    if geo_l == 'Altura' and geo_v == 'Costa' and not db_equipos[visita]['Jerarquia']:
+        gf_visita_segmentado *= 0.75  # Castigo de aire completo a equipos chicos de costa
+        alertas.append(f"🏔️🥵 **Shock Hipóxico (Altura):** {visita} sufre la falta de oxígeno frente a {local}.")
+    elif geo_l == 'Altura' and geo_v == 'Costa' and db_equipos[visita]['Jerarquia']:
+        gf_visita_segmentado *= 0.90  # Un grande de costa se ahoga, pero lo compensa parcialmente con plantel
+        alertas.append(f"🏔️🛡️ **Altura vs Jerarquía:** {visita} expuesto a la altura, pero mitiga daño por peso de plantel.")
 
-        # MODELO MATEMÁTICO AISLADO
-        lambda_local = (db_equipos[local]['GF_L'] + db_equipos[visita]['GC_V']) / 2.0
-        lambda_local = lambda_local / factor_defensa_local  
+    if db_equipos[local]['Pasto'] == 'Sintetico':
+        alertas.append("👟 **Césped Artificial:** Bote rápido controlado por el local.")
+
+    # CÁLCULO DE LAMBDAS CON VARIABLES SEGMENTADAS
+    lambda_local = (gf_local_segmentado + gc_visita_segmentado) / 2.0
+    lambda_visita = ((gf_visita_segmentado * plus_jerarquia_ataque) + gc_local_segmentado) / 2.0
+
+    # POISSON
+    p_local = [poisson.pmf(i, lambda_local) for i in range(6)]
+    p_visita = [poisson.pmf(i, lambda_visita) for i in range(6)]
+    
+    prob_l, prob_e, prob_v, prob_under = 0.0, 0.0, 0.0, 0.0
+    for i in range(6):
+        for j in range(6):
+            p_comb = p_local[i] * p_visita[j]
+            if i > j: prob_l += p_comb
+            elif i == j: prob_e += p_comb
+            else: prob_v += p_comb
+            if (i + j) < 3: prob_under += p_comb
+    
+    total_p = prob_l + prob_e + prob_v
+    pct_l = round((prob_l / total_p) * 100, 1)
+    pct_e = round((prob_e / total_p) * 100, 1)
+    pct_v = round((prob_v / total_p) * 100, 1)
+    pct_over = round((1.0 - prob_under) * 100, 1)
+    pct_under_f = round(prob_under * 100, 1)
+    
+    with st.container(border=True):
+        st.caption(f"📅 {partido['fecha']} — ⏰ {partido['hora']}")
+        titulo_fija = " 🔥 FIJA DE VALOR" if pct_l >= 70.0 or pct_v >= 70.0 else ""
+        st.markdown(f"### 🏟️ {local} vs {visita}{titulo_fija}")
         
-        lambda_visita = (db_equipos[visita]['GF_V'] + db_equipos[local]['GC_L']) / 2.0
-        lambda_visita = lambda_visita * factor_ataque_visita  
-
-        p_local = [poisson.pmf(i, lambda_local) for i in range(6)]
-        p_visita = [poisson.pmf(i, lambda_visita) for i in range(6)]
+        for a in alertas: st.markdown(a)
         
-        prob_l, prob_e, prob_v, prob_under = 0.0, 0.0, 0.0, 0.0
-        for i in range(6):
-            for j in range(6):
-                p_comb = p_local[i] * p_visita[j]
-                if i > j: prob_l += p_comb
-                elif i == j: prob_e += p_comb
-                else: prob_v += p_comb
-                if (i + j) < 3: prob_under += p_comb
+        st.markdown("**📊 Probabilidades de Resultado:**")
+        col1, col2, col3 = st.columns(3)
+        col1.success(f"🟢 Local: {pct_l}%")
+        col2.warning(f"🟡 Empate: {pct_e}%")
+        col3.info(f"🔵 Visita: {pct_v}%")
         
-        total_p = prob_l + prob_e + prob_v
-        pct_l = round((prob_l / total_p) * 100, 1)
-        pct_e = round((prob_e / total_p) * 100, 1)
-        pct_v = round((prob_v / total_p) * 100, 1)
-        pct_over = round((1.0 - prob_under) * 100, 1)
-        pct_under_f = round(prob_under * 100, 1)
-        
-        with st.container(border=True):
-            st.caption(f"📅 {partido['fecha']} — ⏰ {partido['hora']}")
-            titulo_fija = " 🔥 FIJA DE VALOR" if pct_l >= 70.0 or pct_v >= 70.0 else ""
-            st.markdown(f"### 🏟️ {local} vs {visita}{titulo_fija}")
-            
-            for a in alertas: 
-                st.markdown(a)
-            
-            st.markdown("**📊 Probabilidades de Resultado:**")
-            col1, col2, col3 = st.columns(3)
-            col1.success(f"🟢 Local: {pct_l}%")
-            col2.warning(f"🟡 Empate: {pct_e}%")
-            col3.info(f"🔵 Visita: {pct_v}%")
-            
-            st.markdown("**⚽ Goles (Línea de 2.5):**")
-            col_g1, col_g2 = st.columns(2)
-            col_g1.markdown(f"📈 **Más de 2.5 (Over):** {pct_over}%" + (" 🔥" if pct_over >= 70 else ""))
-            col_g2.markdown(f"📉 **Menos de 2.5 (Under):** {pct_under_f}%")
-
-with tab2:
-    st.info("### 🗺️ Configuración del Mapa Geográfico de la Liga 1")
-    df_mostrar = pd.DataFrame.from_dict(db_equipos, orient='index')[['Geografia', 'Pasto', 'Acceso']]
-    st.dataframe(df_mostrar, height=450)
+        st.markdown(f"**⚽ Goles (Línea de 2.5):** Over {pct_over}% | Under {pct_under_f}%")
