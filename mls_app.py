@@ -21,7 +21,6 @@ TEMPORADA_ACTUAL = 2026
 # BASE DE DATOS DE RESPALDO CALIBRADA CON FACTORES CONTEXTUALES
 # =========================================================
 def obtener_base_respaldo():
-    # Incluye: Rendimiento base, Conferencia (Viaje), Tipo de Pasto y Zona Climática Nativa
     return {
         'Inter Miami': {'PJ_L': 6, 'GF_L': 2.70, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.80, 'GC_V': 1.50, 'Conf': 'Este', 'Pasto': 'Natural', 'Clima': 'Caliente'},
         'Columbus Crew': {'PJ_L': 5, 'GF_L': 2.10, 'GC_L': 0.90, 'PJ_V': 5, 'GF_V': 1.50, 'GC_V': 1.10, 'Conf': 'Este', 'Pasto': 'Natural', 'Clima': 'Frio_Templado'},
@@ -76,19 +75,16 @@ def obtener_metricas_api():
                 pj_l = int(home_stats.get("played", 6))
                 pj_v = int(away_stats.get("played", 6))
                 
-                # Mantenemos las etiquetas contextuales de la base estática para no perder el Clima/Pasto
                 meta = base_estatica.get(nombre, {'Conf': 'Este', 'Pasto': 'Natural', 'Clima': 'Frio_Templado'})
                 
                 db_mls[nombre] = {
-                    'PJ_L': pj_l, 
+                    'PJ_L': p_l, 
                     'GF_L': int(home_stats.get("goals_for", 10)) / max(pj_l, 1), 
                     'GC_L': int(home_stats.get("goals_against", 8)) / max(pj_l, 1),
                     'PJ_V': pj_v, 
                     'GF_V': int(away_stats.get("goals_for", 7)) / max(pj_v, 1), 
                     'GC_V': int(away_stats.get("goals_against", 11)) / max(pj_v, 1),
-                    'Conf': meta['Conf'],
-                    'Pasto': meta['Pasto'],
-                    'Clima': meta['Clima']
+                    'Conf': meta['Conf'], 'Pasto': meta['Pasto'], 'Clima': meta['Clima']
                 }
     except:
         pass
@@ -99,7 +95,7 @@ def obtener_metricas_api():
     return db_mls
 
 # =========================================================
-# 2. OBTENER PRÓXIMOS ENCUENTROS
+# 2. CARTELERA COMPLETA DE LA JORNADA
 # =========================================================
 @st.cache_data(ttl=1800)
 def obtener_partidos_api():
@@ -132,11 +128,24 @@ def obtener_partidos_api():
     except:
         pass
         
+    # FIXTURE COMPLETO REGISTRADO DE LA JORNADA (LOS 14 PARTIDOS DE LA MLS)
     if not proximos:
         proximos = [
+            {"local": "Seattle Sounders", "visita": "Chicago Fire", "fecha": "Sábado 29/08", "hora": "15:30"},
+            {"local": "D.C. United", "visita": "LAFC", "fecha": "Sábado 29/08", "hora": "18:30"},
             {"local": "Inter Miami", "visita": "CF Montréal", "fecha": "Sábado 29/08", "hora": "18:30"},
-            {"local": "Seattle Sounders", "visita": "Chicago Fire", "fecha": "Sábado 29/08", "hora": "19:30"},
-            {"local": "Portland Timbers", "visita": "San Jose Earthquakes", "fecha": "Sábado 29/08", "hora": "21:30"}
+            {"local": "Atlanta United", "visita": "Charlotte FC", "fecha": "Sábado 29/08", "hora": "18:30"},
+            {"local": "Toronto FC", "visita": "New York City FC", "fecha": "Sábado 29/08", "hora": "18:30"},
+            {"local": "New York Red Bulls", "visita": "Philadelphia Union", "fecha": "Sábado 29/08", "hora": "18:30"},
+            {"local": "Nashville SC", "visita": "FC Cincinnati", "fecha": "Sábado 29/08", "hora": "19:30"},
+            {"local": "Minnesota United", "visita": "Orlando City SC", "fecha": "Sábado 29/08", "hora": "19:30"},
+            {"local": "Houston Dynamo", "visita": "San Jose Earthquakes", "fecha": "Sábado 29/08", "hora": "19:30"},
+            {"local": "Sporting KC", "visita": "Vancouver Whitecaps", "fecha": "Sábado 29/08", "hora": "19:30"},
+            {"local": "Colorado Rapids", "visita": "Real Salt Lake", "fecha": "Sábado 29/08", "hora": "20:30"},
+            {"local": "San Diego FC", "visita": "LA Galaxy", "fecha": "Sábado 29/08", "hora": "21:30"},
+            {"local": "Portland Timbers", "visita": "Austin FC", "fecha": "Sábado 29/08", "hora": "21:30"},
+            {"local": "Columbus Crew", "visita": "New England Revolution", "fecha": "Domingo 30/08", "hora": "15:30"},
+            {"local": "St. Louis CITY SC", "visita": "FC Dallas", "fecha": "Domingo 30/08", "hora": "18:00"}
         ]
     return proximos, recientes
 
@@ -161,17 +170,14 @@ with tab1:
         factor_defensa_local = 1.0
         alertas = []
         
-        # A) Evaluación Geográfica (Distancia de Vuelo)
         if db_equipos[local]['Conf'] != db_equipos[visita]['Conf']:
             factor_ataque_visita *= 0.90  
             alertas.append(f"✈️ **Viaje Largo:** Cruce Interconferencia ({db_equipos[local]['Conf']} vs {db_equipos[visita]['Conf']})")
             
-        # B) Evaluación de Superficie (Césped Sintético)
         if db_equipos[local]['Pasto'] == 'Sintetico':
             factor_defensa_local *= 0.90  
             alertas.append("👟 **Césped Artificial:** Ventaja adaptativa local (bote rápido).")
             
-        # C) Evaluación de Clima (Shock Térmico)
         clima_l = db_equipos[local]['Clima']
         clima_v = db_equipos[visita]['Clima']
         
@@ -182,16 +188,13 @@ with tab1:
             factor_ataque_visita *= 0.90
             alertas.append(f"❄️🥶 **Shock Térmico:** {visita} expuesto al frío/congelante del norte de {local}.")
 
-        # =========================================================
-        # MÓDULO MATEMÁTICO: TOTALMENTE AISLADO (TU PROPIA LÓGICA)
-        # =========================================================
+        # MODELO DE CÁLCULO DIRECTO AISLADO
         lambda_local = (db_equipos[local]['GF_L'] + db_equipos[visita]['GC_V']) / 2.0
-        lambda_local = lambda_local / factor_defensa_local  # Suma ventaja de casa
+        lambda_local = lambda_local / factor_defensa_local  
         
         lambda_visita = (db_equipos[visita]['GF_V'] + db_equipos[local]['GC_L']) / 2.0
-        lambda_visita = lambda_visita * factor_ataque_visita  # Resta desgaste contextual
+        lambda_visita = lambda_visita * factor_ataque_visita  
 
-        # Distribución de Poisson integrada
         p_local = [poisson.pmf(i, lambda_local) for i in range(6)]
         p_visita = [poisson.pmf(i, lambda_visita) for i in range(6)]
         
@@ -211,7 +214,6 @@ with tab1:
         pct_over = round((1.0 - prob_under) * 100, 1)
         pct_under_f = round(prob_under * 100, 1)
         
-        # Despliegue visual en tarjeta contenedora con activación >= 70.0%
         with st.container(border=True):
             st.caption(f"📅 {partido['fecha']} — ⏰ {partido['hora']}")
             titulo_fija = " 🔥 FIJA" if pct_l >= 70.0 or pct_v >= 70.0 else ""
@@ -233,4 +235,4 @@ with tab1:
 
 with tab2:
     st.success("Variables lógicas independientes sincronizadas perfectamente.")
-    st.info(f"Métricas cargadas: {len(db_equipos)} equipos de la MLS monitorizados de forma aislada.")
+    st.info(f"Métricas cargadas con éxito.")
