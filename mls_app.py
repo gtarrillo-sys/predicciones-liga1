@@ -9,24 +9,36 @@ from scipy.stats import poisson
 @st.cache_data
 def cargar_estadisticas_mls():
     db_mls = {
-        'Inter Miami':       {'PJ_L': 6, 'GF_L': 2.40, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.80, 'GC_V': 1.50, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'Atlanta United':    {'PJ_L': 6, 'GF_L': 1.70, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Sintetico'},
+        'Austin FC':         {'PJ_L': 6, 'GF_L': 1.50, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'Charlotte FC':      {'PJ_L': 6, 'GF_L': 1.30, 'GC_L': 0.85, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.40, 'Conf': 'Este',  'Pasto': 'Sintetico'},
+        'Chicago Fire':      {'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.80, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'Colorado Rapids':   {'PJ_L': 6, 'GF_L': 2.00, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.20, 'GC_V': 1.80, 'Conf': 'Oeste', 'Pasto': 'Natural'},
         'Columbus Crew':     {'PJ_L': 6, 'GF_L': 2.10, 'GC_L': 0.90, 'PJ_V': 6, 'GF_V': 1.50, 'GC_V': 1.10, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'D.C. United':       {'PJ_L': 6, 'GF_L': 1.50, 'GC_L': 1.60, 'PJ_V': 6, 'GF_V': 1.20, 'GC_V': 1.90, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'FC Cincinnati':     {'PJ_L': 6, 'GF_L': 1.90, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.60, 'GC_V': 1.30, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'FC Dallas':         {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 0.95, 'GC_V': 1.70, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'Houston Dynamo':    {'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 0.95, 'PJ_V': 6, 'GF_V': 1.25, 'GC_V': 1.35, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'Inter Miami':       {'PJ_L': 6, 'GF_L': 2.40, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.80, 'GC_V': 1.50, 'Conf': 'Este',  'Pasto': 'Natural'},
         'LA Galaxy':         {'PJ_L': 6, 'GF_L': 2.50, 'GC_L': 1.30, 'PJ_V': 6, 'GF_V': 1.60, 'GC_V': 1.60, 'Conf': 'Oeste', 'Pasto': 'Natural'},
         'LAFC':              {'PJ_L': 6, 'GF_L': 2.30, 'GC_L': 1.00, 'PJ_V': 6, 'GF_V': 1.40, 'GC_V': 1.40, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'FC Cincinnati':     {'PJ_L': 6, 'GF_L': 1.90, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.60, 'GC_V': 1.30, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'Real Salt Lake':    {'PJ_L': 6, 'GF_L': 2.20, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.30, 'GC_V': 1.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Seattle Sounders':  {'PJ_L': 6, 'GF_L': 1.80, 'GC_L': 0.85, 'PJ_V': 6, 'GF_V': 1.20, 'GC_V': 1.20, 'Conf': 'Oeste', 'Pasto': 'Sintetico'},
-        'Atlanta United':    {'PJ_L': 6, 'GF_L': 1.70, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Sintetico'},
+        'Minnesota United':  {'PJ_L': 6, 'GF_L': 1.80, 'GC_L': 1.40, 'PJ_V': 6, 'GF_V': 1.50, 'GC_V': 1.60, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'CF Montréal':       {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 2.00, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'Nashville SC':      {'PJ_L': 6, 'GF_L': 1.45, 'GC_L': 1.15, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.50, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'New England':       {'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.15, 'GC_V': 1.70, 'Conf': 'Este',  'Pasto': 'Natural'},
         'New York City FC':  {'PJ_L': 6, 'GF_L': 1.85, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.50, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'New York Red Bulls':{'PJ_L': 6, 'GF_L': 1.70, 'GC_L': 1.00, 'PJ_V': 6, 'GF_V': 1.15, 'GC_V': 1.35, 'Conf': 'Este',  'Pasto': 'Natural'},
         'Orlando City':      {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.30, 'PJ_V': 6, 'GF_V': 1.30, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'Houston Dynamo':    {'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 0.95, 'PJ_V': 6, 'GF_V': 1.25, 'GC_V': 1.35, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'Philadelphia Union':{'PJ_L': 6, 'GF_L': 1.90, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.40, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Natural'},
         'Portland Timbers':  {'PJ_L': 6, 'GF_L': 2.20, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.30, 'GC_V': 1.90, 'Conf': 'Oeste', 'Pasto': 'Sintetico'},
-        'Colorado Rapids':   {'PJ_L': 6, 'GF_L': 2.00, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.20, 'GC_V': 1.80, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Vancouver Whitecaps':{'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.25, 'PJ_V': 6, 'GF_V': 1.45, 'GC_V': 1.40, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Charlotte FC':      {'PJ_L': 6, 'GF_L': 1.30, 'GC_L': 0.85, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.40, 'Conf': 'Este',  'Pasto': 'Sintetico'},
-        'New York RB':       {'PJ_L': 6, 'GF_L': 1.70, 'GC_L': 1.00, 'PJ_V': 6, 'GF_V': 1.15, 'GC_V': 1.35, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'Real Salt Lake':    {'PJ_L': 6, 'GF_L': 2.20, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.30, 'GC_V': 1.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'San Diego FC':      {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'San Jose Earthquakes':{'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 1.90, 'PJ_V': 6, 'GF_V': 0.90, 'GC_V': 2.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'Seattle Sounders':  {'PJ_L': 6, 'GF_L': 1.80, 'GC_L': 0.85, 'PJ_V': 6, 'GF_V': 1.20, 'GC_V': 1.20, 'Conf': 'Oeste', 'Pasto': 'Sintetico'},
         'Sporting KC':       {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.60, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 2.10, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'San Jose Earthquakes':{'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 1.90, 'PJ_V': 6, 'GF_V': 0.90, 'GC_V': 2.50, 'Conf': 'Oeste', 'Pasto': 'Natural'}
+        'St. Louis City':    {'PJ_L': 6, 'GF_L': 1.70, 'GC_L': 1.40, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.80, 'Conf': 'Oeste', 'Pasto': 'Natural'},
+        'Toronto FC':        {'PJ_L': 6, 'GF_L': 1.35, 'GC_L': 1.40, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Natural'},
+        'Vancouver Whitecaps':{'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.25, 'PJ_V': 6, 'GF_V': 1.45, 'GC_V': 1.40, 'Conf': 'Oeste', 'Pasto': 'Natural'}
     }
     prom_gf_l = sum(e['GF_L'] for e in db_mls.values()) / len(db_mls)
     prom_gc_l = sum(e['GC_L'] for e in db_mls.values()) / len(db_mls)
@@ -35,31 +47,44 @@ def cargar_estadisticas_mls():
 db_equipos, prom_gf_l, prom_gc_l = cargar_estadisticas_mls()
 
 # ==========================================
-# 2. CALENDARIO DE LA SEMANA
+# 2. CALENDARIO REAL DE LA JORNADA MLS
 # ==========================================
 calendario_mls = {
-    'Semana Actual': [
-        ('Inter Miami', 'LA Galaxy'),
-        ('Seattle Sounders', 'LAFC'),
-        ('Columbus Crew', 'Orlando City'),
-        ('Portland Timbers', 'Sporting KC'),
-        ('FC Cincinnati', 'Houston Dynamo')
+    'Jornada Completa': [
+        ('Seattle Sounders', 'Chicago Fire'),
+        ('D.C. United', 'LAFC'),
+        ('Inter Miami', 'CF Montréal'),
+        ('Atlanta United', 'Charlotte FC'),
+        ('Toronto FC', 'New York City FC'),
+        ('New York Red Bulls', 'Philadelphia Union'),
+        ('Nashville SC', 'FC Cincinnati'),
+        ('Minnesota United', 'Orlando City'),
+        ('Houston Dynamo', 'San Jose Earthquakes'),
+        ('Sporting KC', 'Vancouver Whitecaps'),
+        ('Colorado Rapids', 'Real Salt Lake'),
+        ('San Diego FC', 'LA Galaxy'),
+        ('Portland Timbers', 'Austin FC'),
+        ('Columbus Crew', 'New New England')
     ]
 }
 
 # ==========================================
 # 3. INTERFAZ VISUAL NATIVA
 # ==========================================
-st.set_page_config(page_title="MLS - PREDICTOR PRO", page_icon="⚽", layout="centered")
+st.set_page_config(page_title="MLS - PROGRAMACIÓN COMPLETA", page_icon="⚽", layout="centered")
 
-st.title("⚽ MLS - PREDICTOR GANADOR Y TOTALES")
-st.write("Análisis combinado: Predicción de Resultado 1X2 + Mercado de Goles (+/- 2.5).")
+st.title("⚽ MLS - PREDICTOR DE LA JORNADA")
+st.write("Análisis completo 1X2 y mercado Over/Under para todos los partidos programados.")
 
-semana_seleccionada = st.selectbox("📅 Selecciona la Semana de MLS:", list(calendario_mls.keys()))
+semana_seleccionada = st.selectbox("📅 Selecciona la Jornada:", list(calendario_mls.keys()))
 st.markdown("---")
 
 for local, visita in calendario_mls[semana_seleccionada]:
     
+    # Control por si algún equipo del fixture no está mapeado en las métricas base
+    if local not in db_equipos or visita not in db_equipos:
+        continue
+        
     conf_local, pasto_local = db_equipos[local]['Conf'], db_equipos[local]['Pasto']
     conf_visita, pasto_visita = db_equipos[visita]['Conf'], db_equipos[visita]['Pasto']
     
@@ -96,16 +121,13 @@ for local, visita in calendario_mls[semana_seleccionada]:
         for j in range(max_goles):
             p_combinada = p_local[i] * p_visita[j]
             
-            # Cálculo 1X2
             if i > j: prob_l += p_combinada
             elif i == j: prob_e += p_combinada
             else: prob_v += p_combinada
             
-            # Cálculo de Goles Menos de 2.5
             if (i + j) < 3:
                 prob_under += p_combinada
                 
-    # Resto matemático para Más de 2.5
     prob_over = 1.0 - prob_under
     
     total_1x2 = prob_l + prob_e + prob_v
@@ -116,8 +138,7 @@ for local, visita in calendario_mls[semana_seleccionada]:
     pct_under = round(prob_under * 100, 1)
     pct_over = round(prob_over * 100, 1)
     
-    # Condición Fija si hay una probabilidad alta en el ganador
-    es_fija = pct_l >= 75.0 or pct_v >= 75.0
+    es_fija = pct_l >= 70.0 or pct_v >= 70.0
 
     # --- RENDERIZADO VISUAL ---
     with st.container(border=True):
@@ -130,7 +151,6 @@ for local, visita in calendario_mls[semana_seleccionada]:
             for alerta in alertas:
                 st.caption(alerta)
         
-        # FILA 1: Ganador del Partido (1X2)
         st.markdown("**📊 Resultado del Partido:**")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -140,7 +160,6 @@ for local, visita in calendario_mls[semana_seleccionada]:
         with col3:
             st.info(f"🔵 Visita: {pct_v}%")
             
-        # FILA 2: Mercado de Goles (+/- 2.5)
         st.markdown("**⚽ Total de Goles:**")
         col_over, col_under = st.columns(2)
         with col_over:
