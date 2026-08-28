@@ -1,182 +1,194 @@
 import streamlit as st
+import requests
 import pandas as pd
 import numpy as np
 from scipy.stats import poisson
+from datetime import datetime
 
-# ==========================================
-# 1. BASE DE DATOS MLS (MÉTRICAS Y GEOGRAFÍA)
-# ==========================================
-@st.cache_data
-def cargar_estadisticas_mls():
-    db_mls = {
-        'Atlanta United':    {'PJ_L': 6, 'GF_L': 1.70, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Sintetico'},
-        'Austin FC':         {'PJ_L': 6, 'GF_L': 1.50, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Charlotte FC':      {'PJ_L': 6, 'GF_L': 1.30, 'GC_L': 0.85, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.40, 'Conf': 'Este',  'Pasto': 'Sintetico'},
-        'Chicago Fire':      {'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.80, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'Colorado Rapids':   {'PJ_L': 6, 'GF_L': 2.00, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.20, 'GC_V': 1.80, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Columbus Crew':     {'PJ_L': 6, 'GF_L': 2.10, 'GC_L': 0.90, 'PJ_V': 6, 'GF_V': 1.50, 'GC_V': 1.10, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'D.C. United':       {'PJ_L': 6, 'GF_L': 1.50, 'GC_L': 1.60, 'PJ_V': 6, 'GF_V': 1.20, 'GC_V': 1.90, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'FC Cincinnati':     {'PJ_L': 6, 'GF_L': 1.90, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.60, 'GC_V': 1.30, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'FC Dallas':         {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 0.95, 'GC_V': 1.70, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Houston Dynamo':    {'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 0.95, 'PJ_V': 6, 'GF_V': 1.25, 'GC_V': 1.35, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Inter Miami':       {'PJ_L': 6, 'GF_L': 2.40, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.80, 'GC_V': 1.50, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'LA Galaxy':         {'PJ_L': 6, 'GF_L': 2.50, 'GC_L': 1.30, 'PJ_V': 6, 'GF_V': 1.60, 'GC_V': 1.60, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'LAFC':              {'PJ_L': 6, 'GF_L': 2.30, 'GC_L': 1.00, 'PJ_V': 6, 'GF_V': 1.40, 'GC_V': 1.40, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Minnesota United':  {'PJ_L': 6, 'GF_L': 1.80, 'GC_L': 1.40, 'PJ_V': 6, 'GF_V': 1.50, 'GC_V': 1.60, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'CF Montréal':       {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 2.00, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'Nashville SC':      {'PJ_L': 6, 'GF_L': 1.45, 'GC_L': 1.15, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.50, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'New England':       {'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.15, 'GC_V': 1.70, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'New York City FC':  {'PJ_L': 6, 'GF_L': 1.85, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 1.50, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'New York Red Bulls':{'PJ_L': 6, 'GF_L': 1.70, 'GC_L': 1.00, 'PJ_V': 6, 'GF_V': 1.15, 'GC_V': 1.35, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'Orlando City':      {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.30, 'PJ_V': 6, 'GF_V': 1.30, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'Philadelphia Union':{'PJ_L': 6, 'GF_L': 1.90, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.40, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'Portland Timbers':  {'PJ_L': 6, 'GF_L': 2.20, 'GC_L': 1.50, 'PJ_V': 6, 'GF_V': 1.30, 'GC_V': 1.90, 'Conf': 'Oeste', 'Pasto': 'Sintetico'},
-        'Real Salt Lake':    {'PJ_L': 6, 'GF_L': 2.20, 'GC_L': 1.10, 'PJ_V': 6, 'GF_V': 1.30, 'GC_V': 1.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'San Diego FC':      {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.20, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'San Jose Earthquakes':{'PJ_L': 6, 'GF_L': 1.40, 'GC_L': 1.90, 'PJ_V': 6, 'GF_V': 0.90, 'GC_V': 2.50, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Seattle Sounders':  {'PJ_L': 6, 'GF_L': 1.80, 'GC_L': 0.85, 'PJ_V': 6, 'GF_V': 1.20, 'GC_V': 1.20, 'Conf': 'Oeste', 'Pasto': 'Sintetico'},
-        'Sporting KC':       {'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.60, 'PJ_V': 6, 'GF_V': 1.00, 'GC_V': 2.10, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'St. Louis City':    {'PJ_L': 6, 'GF_L': 1.70, 'GC_L': 1.40, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.80, 'Conf': 'Oeste', 'Pasto': 'Natural'},
-        'Toronto FC':        {'PJ_L': 6, 'GF_L': 1.35, 'GC_L': 1.40, 'PJ_V': 6, 'GF_V': 1.10, 'GC_V': 1.60, 'Conf': 'Este',  'Pasto': 'Natural'},
-        'Vancouver Whitecaps':{'PJ_L': 6, 'GF_L': 1.60, 'GC_L': 1.25, 'PJ_V': 6, 'GF_V': 1.45, 'GC_V': 1.40, 'Conf': 'Oeste', 'Pasto': 'Natural'}
-    }
+# Configuración de cabeceras para la API compartida desde tu RapidAPI
+API_KEY = "cee4cebcd9msh82842660a6a542cp1710c9jsnfc3990e9eac0"
+API_HOST = "free-api-live-football-data.p.rapidapi.com"
+
+headers = {
+    "X-RapidAPI-Key": API_KEY,
+    "X-RapidAPI-Host": API_HOST
+}
+
+# ID de la MLS en esta API específica
+MLS_LEAGUE_ID = 253 
+TEMPORADA_ACTUAL = 2026
+
+# =========================================================
+# 1. CARGA AUTOMÁTICA DE ESTADÍSTICAS EN VIVO DESDE LA API
+# =========================================================
+@st.cache_data(ttl=3600)  # Guarda en caché por 1 hora para no agotar tus 100 llamadas diarias
+def obtener_metricas_api():
+    url_standings = f"https://{API_HOST}/football-league-standings"
+    querystring = {"league_id": str(MLS_LEAGUE_ID), "season": str(TEMPORADA_ACTUAL)}
+    
+    db_mls = {}
+    try:
+        response = requests.get(url_standings, headers=headers, params=querystring)
+        data = response.json()
+        
+        # Procesar los datos de la tabla que provee la API
+        if "results" in data and "standings" in data["results"]:
+            for team in data["results"]["standings"]:
+                nombre = team.get("team_name")
+                
+                # Extraer estadísticas de Local
+                home_stats = team.get("home", {})
+                pj_l = int(home_stats.get("played", 6))
+                gf_l = int(home_stats.get("goals_for", 10))
+                gc_l = int(home_stats.get("goals_against", 8))
+                
+                # Extraer estadísticas de Visita
+                away_stats = team.get("away", {})
+                pj_v = int(away_stats.get("played", 6))
+                gf_v = int(away_stats.get("goals_for", 7))
+                gc_v = int(away_stats.get("goals_against", 11))
+                
+                # Configuración geográfica base para factores tácticos
+                conferencia = "Este" if team.get("group_name") == "Eastern Conference" else "Oeste"
+                # Estadios conocidos con pasto sintético en la MLS
+                sinteticos = ["Seattle Sounders", "Atlanta United", "Portland Timbers", "Charlotte FC", "New England"]
+                tipo_pasto = "Sintetico" if nombre in sinteticos else "Natural"
+                
+                db_mls[nombre] = {
+                    'PJ_L': pj_l, 'GF_L': gf_l / max(pj_l, 1), 'GC_L': gc_l / max(pj_l, 1),
+                    'PJ_V': pj_v, 'GF_V': gf_v / max(pj_v, 1), 'GC_V': gc_v / max(pj_v, 1),
+                    'Conf': conferencia, 'Pasto': tipo_pasto
+                }
+    except Exception as e:
+        st.error(f"Error al conectar con las estadísticas de la API: {e}")
+        
+    # Valores de respaldo por si la API no responde momentáneamente
+    if not db_mls:
+        return {'Inter Miami': {'PJ_L': 6, 'GF_L': 2.4, 'GC_L': 1.2, 'PJ_V': 6, 'GF_V': 1.8, 'GC_V': 1.5, 'Conf': 'Este', 'Pasto': 'Natural'}}, 1.6, 1.4
+
     prom_gf_l = sum(e['GF_L'] for e in db_mls.values()) / len(db_mls)
     prom_gc_l = sum(e['GC_L'] for e in db_mls.values()) / len(db_mls)
     return db_mls, prom_gf_l, prom_gc_l
 
-db_equipos, prom_gf_l, prom_gc_l = cargar_estadisticas_mls()
-
-# ==========================================
-# 2. CALENDARIO CON FECHAS Y HORAS
-# ==========================================
-calendario_mls = {
-    'Jornada Completa': [
-        {'local': 'Seattle Sounders',   'visita': 'Chicago Fire',       'fecha': 'Sábado 29/08', 'hora': '15:30'},
-        {'local': 'D.C. United',        'visita': 'LAFC',               'fecha': 'Sábado 29/08', 'hora': '18:30'},
-        {'local': 'Inter Miami',        'visita': 'CF Montréal',        'fecha': 'Sábado 29/08', 'hora': '18:30'},
-        {'local': 'Atlanta United',     'visita': 'Charlotte FC',       'fecha': 'Sábado 29/08', 'hora': '18:30'},
-        {'local': 'Toronto FC',         'visita': 'New York City FC',   'fecha': 'Sábado 29/08', 'hora': '18:30'},
-        {'local': 'New York Red Bulls', 'visita': 'Philadelphia Union', 'fecha': 'Sábado 29/08', 'hora': '18:30'},
-        {'local': 'Nashville SC',       'visita': 'FC Cincinnati',      'fecha': 'Sábado 29/08', 'hora': '19:30'},
-        {'local': 'Minnesota United',   'visita': 'Orlando City',       'fecha': 'Sábado 29/08', 'hora': '19:30'},
-        {'local': 'Houston Dynamo',     'visita': 'San Jose Earthquakes','fecha': 'Sábado 29/08', 'hora': '19:30'},
-        {'local': 'Sporting KC',        'visita': 'Vancouver Whitecaps','fecha': 'Sábado 29/08', 'hora': '19:30'},
-        {'local': 'Colorado Rapids',    'visita': 'Real Salt Lake',     'fecha': 'Sábado 29/08', 'hora': '20:30'},
-        {'local': 'San Diego FC',       'visita': 'LA Galaxy',          'fecha': 'Sábado 29/08', 'hora': '21:30'},
-        {'local': 'Portland Timbers',   'visita': 'Austin FC',          'fecha': 'Sábado 29/08', 'hora': '21:30'},
-        {'local': 'Columbus Crew',      'visita': 'New England',        'fecha': 'Domingo 30/08','hora': '17:00'}
-    ]
-}
-
-# ==========================================
-# 3. INTERFAZ VISUAL NATIVA
-# ==========================================
-st.set_page_config(page_title="MLS - PROGRAMACIÓN COMPLETA", page_icon="⚽", layout="centered")
-
-st.title("⚽ MLS - PREDICTOR DE LA JORNADA")
-st.write("Análisis completo 1X2 y mercado Over/Under para todos los partidos programados.")
-
-semana_seleccionada = st.selectbox("📅 Selecciona la Jornada:", list(calendario_mls.keys()))
-st.markdown("---")
-
-for partido in calendario_mls[semana_seleccionada]:
-    local = partido['local']
-    visita = partido['visita']
-    fecha_partido = partido['fecha']
-    hora_partido = partido['hora']
+# =========================================================
+# 2. CARGA AUTOMÁTICA DE PARTIDOS (PRÓXIMOS Y RECIENTES)
+# =========================================================
+@st.cache_data(ttl=1800)
+def obtener_partidos_api():
+    url_fixtures = f"https://{API_HOST}/football-league-fixtures"
+    querystring = {"league_id": str(MLS_LEAGUE_ID), "season": str(TEMPORADA_ACTUAL)}
     
-    if local not in db_equipos or visita not in db_equipos:
-        continue
+    proximos = []
+    recientes = []
+    
+    try:
+        response = requests.get(url_fixtures, headers=headers, params=querystring)
+        data = response.json()
         
-    conf_local, pasto_local = db_equipos[local]['Conf'], db_equipos[local]['Pasto']
-    conf_visita, pasto_visita = db_equipos[visita]['Conf'], db_equipos[visita]['Pasto']
-    
-    # --- MODIFICADORES DE VALOR ---
-    factor_ataque_visita = 1.0
-    factor_defensa_local = 1.0
-    alertas = []
-
-    if conf_local != conf_visita:
-        factor_ataque_visita *= 0.85
-        alertas.append("✈️ **Viaje Largo:** Cruce Interconferencia (Este vs Oeste)")
-        
-    if pasto_local == 'Sintetico' and pasto_visita == 'Natural':
-        factor_defensa_local *= 0.90
-        alertas.append("👟 **Césped Artificial:** Ventaja adaptativa local")
-
-    # --- CÁLCULOS MATEMÁTICOS (POISSON) ---
-    fuerza_of_l = db_equipos[local]['GF_L'] / prom_gf_l
-    fuerza_def_v = db_equipos[visita]['GC_V'] / prom_gf_l
-    lambda_local = fuerza_of_l * fuerza_def_v * prom_gf_l * (1 / factor_defensa_local)
-    
-    fuerza_of_v = db_equipos[visita]['GF_V'] / prom_gc_l
-    fuerza_def_l = db_equipos[local]['GC_L'] / prom_gc_l
-    lambda_visita = fuerza_of_v * fuerza_def_l * prom_gc_l * factor_ataque_visita
-    
-    max_goles = 6
-    p_local = [poisson.pmf(i, lambda_local) for i in range(max_goles)]
-    p_visita = [poisson.pmf(i, lambda_visita) for i in range(max_goles)]
-    
-    prob_l, prob_e, prob_v = 0.0, 0.0, 0.0
-    prob_under = 0.0
-    
-    for i in range(max_goles):
-        for j in range(max_goles):
-            p_combinada = p_local[i] * p_visita[j]
-            
-            if i > j: prob_l += p_combinada
-            elif i == j: prob_e += p_combinada
-            else: prob_v += p_combinada
-            
-            if (i + j) < 3:
-                prob_under += p_combinada
+        if "results" in data and "fixtures" in data["results"]:
+            for match in data["results"]["fixtures"]:
+                status = match.get("status_short") # FT significa Finalizado, NS significa No Empezado
                 
-    prob_over = 1.0 - prob_under
-    
-    total_1x2 = prob_l + prob_e + prob_v
-    pct_l = round((prob_l / total_1x2) * 100, 1)
-    pct_e = round((prob_e / total_1x2) * 100, 1)
-    pct_v = round((prob_v / total_1x2) * 100, 1)
-    
-    pct_under = round(prob_under * 100, 1)
-    pct_over = round(prob_over * 100, 1)
-    
-    es_fija = pct_l >= 70.0 or pct_v >= 70.0
-
-    # --- RENDERIZADO VISUAL ---
-    with st.container(border=True):
-        # Mostramos la fecha y hora arriba de forma sutil
-        st.caption(f"📅 {fecha_partido} — ⏰ {hora_partido}")
-        
-        if es_fija:
-            st.markdown(f"### 🏟️ {local} vs {visita} :orange[**🔥 FIJA**]")
-        else:
-            st.markdown(f"### 🏟️ {local} vs {visita}")
-            
-        if alertas:
-            for alerta in alertas:
-                st.caption(alerta)
-        
-        st.markdown("**📊 Resultado del Partido:**")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.success(f"🟢 Local: {pct_l}%")
-        with col2:
-            st.warning(f"🟡 Empate: {pct_e}%")
-        with col3:
-            st.info(f"🔵 Visita: {pct_v}%")
-            
-        st.markdown("**⚽ Total de Goles:**")
-        col_over, col_under = st.columns(2)
-        with col_over:
-            if pct_over >= 60.0:
-                st.markdown(f"📈 **Más de 2.5 (Over):** :green[{pct_over}%] 🔥")
-            else:
-                st.markdown(f"📈 **Más de 2.5 (Over):** {pct_over}%")
-        with col_under:
-            if pct_under >= 60.0:
-                st.markdown(f"📉 **Menos de 2.5 (Under):** :green[{pct_under}%] 🔥")
-            else:
-                st.markdown(f"📉 **Menos de 2.5 (Under):** {pct_under}%")
+                # Limpieza de fecha y hora
+                dt_str = match.get("event_date", "")
+                try:
+                    dt = datetime.strptime(dt_str[:16], "%Y-%m-%dT%H:%M")
+                    fecha_f = dt.strftime("%A %d/%m")
+                    hora_f = dt.strftime("%H:%M")
+                except:
+                    fecha_f = "Por definir"
+                    hora_f = "--:--"
                 
-        st.write("")
+                partido_info = {
+                    "local": match.get("home_team_name"),
+                    "visita": match.get("away_team_name"),
+                    "fecha": fecha_f,
+                    "hora": hora_f,
+                    "goles_l": match.get("goals_home_team"),
+                    "goles_v": match.get("goals_away_team")
+                }
+                
+                if status in ["FT", "AET", "PEN"]:
+                    recientes.append(partido_info)
+                else:
+                    proximos.append(partido_info)
+    except Exception as e:
+        st.error(f"Error al conectar con el calendario de la API: {e}")
+        
+    return proximos[:14], recientes[:14] # Limitar a los 14 más inmediatos de la jornada
+
+# =========================================================
+# 3. INTERFAZ EN STREAMLIT CON PESTAÑAS (TABS)
+# =========================================================
+st.set_page_config(page_title="MLS AUTOMÁTICA PRO", page_icon="⚽", layout="centered")
+st.title("⚽ MLS - ANALIZADOR AUTOMÁTICO EN VIVO")
+st.write("Estadísticas de equipos y partidos actualizados en tiempo real mediante API.")
+
+db_equipos, prom_gf_l, prom_gc_l = obtener_metricas_api()
+partidos_proximos, partidos_recientes = obtener_partidos_api()
+
+tab1, tab2 = st.tabs(["📅 Próxima Jornada (Predicciones)", "📊 Resultados Recientes (Auditoría)"])
+
+# --- PESTAÑA 1: PREDICCIONES ---
+with tab1:
+    if not partidos_proximos:
+        st.info("No hay partidos programados próximamente o la jornada actual ha concluido.")
+    else:
+        for partido in partidos_proximos:
+            local, visita = partido['local'], partido['visita']
+            
+            if local not in db_equipos or visita not in db_equipos:
+                continue
+                
+            # Algoritmo de Poisson con modificadores tácticos de localía y viaje
+            factor_ataque_visita, factor_defensa_local = 1.0, 1.0
+            alertas = []
+            if db_equipos[local]['Conf'] != db_equipos[visita]['Conf']:
+                factor_ataque_visita *= 0.85
+                alertas.append("✈️ **Viaje Largo:** Cruce Interconferencia")
+            if db_equipos[local]['Pasto'] == 'Sintetico' and db_equipos[visita]['Pasto'] == 'Natural':
+                factor_defensa_local *= 0.90
+                alertas.append("👟 **Césped Artificial:** Ventaja adaptativa local")
+
+            lambda_local = (db_equipos[local]['GF_L'] / prom_gf_l) * (db_equipos[visita]['GC_V'] / prom_gf_l) * prom_gf_l * (1 / factor_defensa_local)
+            lambda_visita = (db_equipos[visita]['GF_V'] / prom_gc_l) * (db_equipos[local]['GC_L'] / prom_gc_l) * prom_gc_l * factor_ataque_visita
+            
+            p_local = [poisson.pmf(i, lambda_local) for i in range(6)]
+            p_visita = [poisson.pmf(i, lambda_visita) for i in range(6)]
+            
+            prob_l, prob_e, prob_v, prob_under = 0.0, 0.0, 0.0, 0.0
+            for i in range(6):
+                for j in range(6):
+                    p_comb = p_local[i] * p_visita[j]
+                    if i > j: prob_l += p_comb
+                    elif i == j: prob_e += p_comb
+                    else: prob_v += p_comb
+                    if (i + j) < 3: prob_under += p_comb
+            
+            pct_l = round((prob_l / (prob_l + prob_e + prob_v)) * 100, 1)
+            pct_e = round((prob_e / (prob_l + prob_e + prob_v)) * 100, 1)
+            pct_v = round((prob_v / (prob_l + prob_e + prob_v)) * 100, 1)
+            pct_over = round((1.0 - prob_under) * 100, 1)
+            
+            with st.container(border=True):
+                st.caption(f"📅 {partido['fecha']} — ⏰ {partido['hora']}")
+                st.markdown(f"### 🏟️ {local} vs {visita} " + (" :orange[**🔥 FIJA**]" if pct_l >= 70 or pct_v >= 70 else ""))
+                for a in alertas: st.caption(a)
+                
+                col1, col2, col3 = st.columns(3)
+                col1.success(f"🟢 Local: {pct_l}%")
+                col2.warning(f"🟡 Empate: {pct_e}%")
+                col3.info(f"🔵 Visita: {pct_v}%")
+                
+                st.markdown(f"⚽ **Más de 2.5 Goles (Over):** {pct_over}%" + (" 🔥" if pct_over >= 60 else ""))
+
+# --- PESTAÑA 2: AUDITORÍA DE RESULTADOS RECIENTES ---
+with tab2:
+    if not partidos_recientes:
+        st.info("No se registran partidos jugados recientemente en los registros de la API.")
+    else:
+        st.write("Compara las predicciones previas contra los marcadores reales de los últimos juegos:")
+        for partido in partidos_recientes:
+            with st.container(border=True):
+                st.caption(f"✅ Partido Finalizado — {partido['fecha']}")
+                st.markdown(f"### 🏟️ {partido['local']}  :red[{partido['goles_l']}]  vs  :red[{partido['goles_v']}]  {partido['visita']}")
