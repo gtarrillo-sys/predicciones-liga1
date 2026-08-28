@@ -47,24 +47,24 @@ def cargar_estadisticas_mls():
 db_equipos, prom_gf_l, prom_gc_l = cargar_estadisticas_mls()
 
 # ==========================================
-# 2. CALENDARIO REAL DE LA JORNADA MLS
+# 2. CALENDARIO CON FECHAS Y HORAS
 # ==========================================
 calendario_mls = {
     'Jornada Completa': [
-        ('Seattle Sounders', 'Chicago Fire'),
-        ('D.C. United', 'LAFC'),
-        ('Inter Miami', 'CF Montréal'),
-        ('Atlanta United', 'Charlotte FC'),
-        ('Toronto FC', 'New York City FC'),
-        ('New York Red Bulls', 'Philadelphia Union'),
-        ('Nashville SC', 'FC Cincinnati'),
-        ('Minnesota United', 'Orlando City'),
-        ('Houston Dynamo', 'San Jose Earthquakes'),
-        ('Sporting KC', 'Vancouver Whitecaps'),
-        ('Colorado Rapids', 'Real Salt Lake'),
-        ('San Diego FC', 'LA Galaxy'),
-        ('Portland Timbers', 'Austin FC'),
-        ('Columbus Crew', 'New England')
+        {'local': 'Seattle Sounders',   'visita': 'Chicago Fire',       'fecha': 'Sábado 29/08', 'hora': '15:30'},
+        {'local': 'D.C. United',        'visita': 'LAFC',               'fecha': 'Sábado 29/08', 'hora': '18:30'},
+        {'local': 'Inter Miami',        'visita': 'CF Montréal',        'fecha': 'Sábado 29/08', 'hora': '18:30'},
+        {'local': 'Atlanta United',     'visita': 'Charlotte FC',       'fecha': 'Sábado 29/08', 'hora': '18:30'},
+        {'local': 'Toronto FC',         'visita': 'New York City FC',   'fecha': 'Sábado 29/08', 'hora': '18:30'},
+        {'local': 'New York Red Bulls', 'visita': 'Philadelphia Union', 'fecha': 'Sábado 29/08', 'hora': '18:30'},
+        {'local': 'Nashville SC',       'visita': 'FC Cincinnati',      'fecha': 'Sábado 29/08', 'hora': '19:30'},
+        {'local': 'Minnesota United',   'visita': 'Orlando City',       'fecha': 'Sábado 29/08', 'hora': '19:30'},
+        {'local': 'Houston Dynamo',     'visita': 'San Jose Earthquakes','fecha': 'Sábado 29/08', 'hora': '19:30'},
+        {'local': 'Sporting KC',        'visita': 'Vancouver Whitecaps','fecha': 'Sábado 29/08', 'hora': '19:30'},
+        {'local': 'Colorado Rapids',    'visita': 'Real Salt Lake',     'fecha': 'Sábado 29/08', 'hora': '20:30'},
+        {'local': 'San Diego FC',       'visita': 'LA Galaxy',          'fecha': 'Sábado 29/08', 'hora': '21:30'},
+        {'local': 'Portland Timbers',   'visita': 'Austin FC',          'fecha': 'Sábado 29/08', 'hora': '21:30'},
+        {'local': 'Columbus Crew',      'visita': 'New England',        'fecha': 'Domingo 30/08','hora': '17:00'}
     ]
 }
 
@@ -79,9 +79,12 @@ st.write("Análisis completo 1X2 y mercado Over/Under para todos los partidos pr
 semana_seleccionada = st.selectbox("📅 Selecciona la Jornada:", list(calendario_mls.keys()))
 st.markdown("---")
 
-for local, visita in calendario_mls[semana_seleccionada]:
+for partido in calendario_mls[semana_seleccionada]:
+    local = partido['local']
+    visita = partido['visita']
+    fecha_partido = partido['fecha']
+    hora_partido = partido['hora']
     
-    # Control por si algún equipo del fixture no está mapeado en las métricas base
     if local not in db_equipos or visita not in db_equipos:
         continue
         
@@ -142,6 +145,9 @@ for local, visita in calendario_mls[semana_seleccionada]:
 
     # --- RENDERIZADO VISUAL ---
     with st.container(border=True):
+        # Mostramos la fecha y hora arriba de forma sutil
+        st.caption(f"📅 {fecha_partido} — ⏰ {hora_partido}")
+        
         if es_fija:
             st.markdown(f"### 🏟️ {local} vs {visita} :orange[**🔥 FIJA**]")
         else:
