@@ -181,24 +181,46 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
         else:
             st.success("✅ Filtro Financiero Limpio: Sin deudas ni huelgas reportadas en las últimas horas.")
 
-        # CAPA 4: SUGERENCIA FINAL
+       # CAPA 4: SUGERENCIA FINAL CON PREDICCIÓN DE GOLES FIJA
         st.write("#### 🧠 Capa 4: Sugerencia Final del Sistema")
         if crisis_activa:
             st.error("❌ APUESTA BLOQUEADA: Alto peligro institucional. Los problemas de sueldos rompen cualquier lógica deportiva.")
         else:
             es_clima_extremo = "Altura" in geo_local["tipo"] or "Calor" in geo_local["tipo"]
+            
+            # --- CÁLCULO LOGÍSTICO DE GOLES PROBABLES ---
+            # Si ambos tienen mala racha o juegan en altura extrema, la tendencia es a la baja
+            if (r_local <= 2 and r_visita <= 2) or ("Altura" in geo_local["tipo"]):
+                goles_prediccion = "Menos de 2.5 Goles en el partido (Baja anotación)"
+                sustento_goles = "Ambos equipos vienen con baja efectividad ofensiva o la altura regulará el ritmo del partido en el segundo tiempo."
+            elif r_local >= 4 and r_visita >= 4:
+                goles_prediccion = "Más de 2.5 Goles (Partido de alta intensidad)"
+                sustento_goles = "Ambos equipos arrastran rachas muy altas de efectividad y proponen un juego ofensivo constante."
+            else:
+                goles_prediccion = "Más de 1.5 Goles totales (Línea segura)"
+                sustento_goles = "Dinámica equilibrada de torneo donde la urgencia de puntos forzará al menos dos goles."
+
+            # --- SUGERENCIA DE RESULTADO ---
             if es_clima_extremo:
                 if p_visita <= 4 or p_visita >= 16:
                     if r_visita >= 4:
-                        st.info(f"🎯 **Sugerencia Óptima:** Ambos Anotan (Sí) O Más de 1.5 Goles.\n\n*Sustento:* {local} explota su geografía ({geo_local['tipo']}), pero {visita} se juega la vida por objetivos críticos en el Acumulado (Puesto {p_visita}) y llega con una excelente racha de confianza ({r_visita}/5) para hacer daño.")
+                        sug_resultado = "Ambos Anotan (Sí) o Empate"
                     else:
-                        st.info(f"🎯 **Sugerencia Óptima:** Ganador Seco {local} (Local).\n\n*Sustento:* El clima de {geo_local['ciudad']} ({geo_local['tipo']}) sumado a la pésima racha anímica de la visita ({r_visita}/5) causará un desgaste físico y psicológico irreversible en el segundo tiempo.")
+                        sug_resultado = f"Ganador Seco {local} (Local)"
                 else:
-                    st.info(f"🎯 **Sugerencia Óptima:** Doble Oportunidad: Ganador Local o Empate.\n\n*Sustento:* Ventaja geográfica estable frente a un rival en zona media sin presiones críticas.")
+                    sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
             else:
                 if r_local >= 4 and r_visita >= 4:
-                    st.info("🎯 **Sugerencia Óptima:** Ambos Anotan (Sí) O Más de 2.5 Goles.\n\n*Sustento:* Choque de poderes en condiciones climáticas neutras. Ambos equipos vienen con las rachas encendidas e inercias de ataque altas.")
+                    sug_resultado = "Ambos Anotan (Sí)"
+                elif p_local >= 16 or p_visita >= 16:
+                    sug_resultado = "Doble Oportunidad: Local o Visitante (No hay empate por desesperación de puntos)"
                 else:
-                    st.info("🎯 **Sugerencia Óptima:** Menos de 3.5 Goles O Más de 1.5 Goles en total.\n\n*Sustento:* Dinámica regular de juego en llano sin factores externos de distorsión.")
-else:
-    st.info("💡 Por favor, sube el archivo 'liga1_data.xlsx' a la raíz de tu repositorio de GitHub para inicializar los módulos predictivos.")
+                    sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
+
+            # --- MOSTRAR LOS RESULTADOS EN PANTALLA ---
+            st.info(f"""
+🎯 **Pronóstico de Resultado:** {sug_resultado}
+⚽ **Predicción de Goles:** {goles_prediccion}
+
+*Sustento:* {sustento_goles} {local} en su geografía ({geo_local['tipo']}) buscará asegurar puntos frente a un {visita} con presión en la tabla (Puesto {p_visita}).
+""")
