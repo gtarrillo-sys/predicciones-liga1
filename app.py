@@ -13,8 +13,8 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("🤖 Sistema de Apuestas Profesional 2.0")
-st.markdown("### Motor de Predicción: Geografía + Tabla Acumulada + Factor Racha + Radar Financiero")
+st.title("🤖 Sistema de Apuestas Profesional 3.0")
+st.markdown("### Motor de Predicción Extremo: Geografía + Canchas + Desgaste por Traslado + Radar Financiero")
 st.markdown("---")
 
 # =====================================================================
@@ -30,7 +30,6 @@ def cargar_base_de_datos():
         lista_partidos_fecha = []
         nombre_jornada = "Jornada Actual"
         
-        # Intentar leer la pestaña de Partidos_Fecha
         try:
             df_partidos = pd.read_excel("liga1_data.xlsx", sheet_name="Partidos_Fecha")
             if "Jornada" in df_partidos.columns and not df_partidos.empty:
@@ -52,7 +51,9 @@ def cargar_base_de_datos():
             geo_dict[row["Club"]] = {
                 "ciudad": row["Ciudad"],
                 "tipo": row["Tipo_Clima"],
-                "factor_local": float(row["Factor_Local"])
+                "factor_local": float(row["Factor_Local"]),
+                "cancha": str(row["Tipo_Cancha"]) if "Tipo_Cancha" in df_geo.columns else "Natural",
+                "traslado_complejo": int(row["Traslado_Complejo"]) if "Traslado_Complejo" in df_geo.columns else 0
             }
             
         racha_dict = dict(zip(df_geo["Club"], df_geo["Racha"] if "Racha" in df_geo.columns else [3]*18))
@@ -108,8 +109,6 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
     
     if PARTIDOS_PROGRAMADOS:
         st.write(f"#### 🗓️ Análisis Planificado: **{NOMBRE_JORNADA}**")
-        
-        # Los 9 partidos primero para que el primero aparezca seleccionado por defecto
         opciones_partidos = [p["texto"] for p in PARTIDOS_PROGRAMADOS] + ["🔄 Hacer un Cruce Manual / Libre"]
         partido_seleccionado = st.selectbox("Selecciona uno de los 9 partidos de la fecha:", opciones_partidos)
         
@@ -139,34 +138,42 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
         r_local = FACTOR_RACHA.get(local, 3)
         r_visita = FACTOR_RACHA.get(visita, 3)
         geo_local = DATA_GEOGRAFICA[local]
+        geo_visita = DATA_GEOGRAFICA[visita]
 
         # CAPA 1: TABLA ACUMULADA
         st.write("#### 🛡️ Capa 1: Presión por Objetivos (Tabla Acumulada)")
         if p_local <= 4:
-            st.info(f"🏆 {local} (Puesto {p_local}) defiende zona de Copa Libertadores. Motivación económica máxima.")
+            st.info(f"🏆 {local} (Puesto {p_local}) defiende zona de Copa Libertadores.")
         elif p_local <= 8:
             st.info(f"🎟️ {local} (Puesto {p_local}) se encuentra en puestos de Copa Sudamericana.")
         elif p_local >= 16:
-            st.warning(f"⚠️ {local} (Puesto {p_local}) está en ZONA DE DESCENSO DIRECTO. Desesperación alta, juego físico severo.")
+            st.warning(f"⚠️ {local} (Puesto {p_local}) está en ZONA DE DESCENSO DIRECTO.")
             
         if p_visita <= 4:
-            st.info(f"🏆 {visita} (Puesto {p_visita}) está obligado a proponer afuera para mantener cupo a Libertadores.")
+            st.info(f"🏆 {visita} (Puesto {p_visita}) está obligado a proponer afuera.")
         elif p_visita <= 8:
-            st.info(f"🎟️ {visita} (Puesto {p_visita}) busca consolidar su clasificación a Sudamericana.")
+            st.info(f"🎟️ {visita} (Puesto {p_visita}) busca consolidar su clasificación.")
         elif p_visita >= 16:
-            st.warning(f"⚠️ {visita} (Puesto {p_visita}) pelea el DESCENSO. Planteará un bloque defensivo muy bajo (bus atrás).")
+            st.warning(f"⚠️ {visita} (Puesto {p_visita}) pelea el DESCENSO.")
 
-        # CAPA 2: RACHA
-        st.write("#### 📈 Capa 2: Termómetro de Forma Reciente (Racha)")
+        # CAPA 2: RACHA Y ESTADO FÍSICO (NUEVO TRASLADO + CANCHA)
+        st.write("#### 📈 Capa 2: Estado de Forma y Alertas de Desgaste")
         if r_local >= 4:
-            st.success(f"🟩 {local} viene en inercia ganadora (Racha: {r_local}/5). Confianza alta que disminuye el cansancio.")
+            st.success(f"🟩 {local} viene en inercia ganadora (Racha: {r_local}/5).")
         elif r_local <= 2:
-            st.error(f"🟥 {local} arrastra una crisis de resultados (Racha: {r_local}/5). Vulnerabilidad al recibir el primer gol.")
+            st.error(f"🟥 {local} arrastra una crisis de resultados (Racha: {r_local}/5).")
             
         if r_visita >= 4:
             st.success(f"🟩 {visita} llega con un ritmo competitivo sólido (Racha: {r_visita}/5).")
         elif r_visita <= 2:
-            st.error(f"🟥 {visita} está golpeado anímicamente (Racha: {r_visita}/5). Propensión a errores defensivos forzados.")
+            st.error(f"🟥 {visita} está golpeado anímicamente (Racha: {r_visita}/5).")
+
+        # Alertas de canchas y traslados
+        if geo_local["cancha"] == "Sintético":
+            st.warning(f"🏟️ ALERTA DE GRAMADO: {local} juega en Grass Sintético. El balón corre más rápido y causa fatiga articular severa en equipos no acostumbrados.")
+        
+        if geo_local["traslado_complejo"] == 1:
+            st.warning(f"🚌 ALERTA DE TRASLADO: Llegar a la ciudad de {local} ({geo_local['ciudad']}) requiere viajes largos por carretera o escalas pesadas. {visita} sufrirá un desgaste físico extra por el viaje.")
 
         # CAPA 3: FILTRO FINANCIERO
         st.write("#### 🕵️‍♂️ Capa 3: Filtro Extra-Cancha (Problemas de Pagos)")
@@ -179,57 +186,48 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
             for alerta in alertas_finanzas:
                 st.error(alerta)
         else:
-            st.success("✅ Filtro Financiero Limpio: Sin deudas ni huelgas reportadas en las últimas horas.")
+            st.success("✅ Filtro Financiero Limpio: Sin deudas ni huelgas reportadas.")
 
-       # =====================================================================
-        # CAPA 4: SUGERENCIA FINAL DEL SISTEMA (CORREGIDO)
+        # =====================================================================
+        # CAPA 4: SUGERENCIA FINAL DEL SISTEMA EXTREMA
         # =====================================================================
         st.write("#### 🧠 Capa 4: Sugerencia Final del Sistema")
         
         if crisis_activa:
-            st.error("❌ APUESTA BLOQUEADA: Alto peligro institucional. Los problemas de sueldos rompen cualquier lógica deportiva.")
+            st.error("❌ APUESTA BLOQUEADA: Alto peligro institucional por deudas.")
         else:
             es_clima_extremo = "Altura" in geo_local["tipo"] or "Calor" in geo_local["tipo"]
             
-            # --- 1. CÁLCULO DE GOLES ---
-            if (r_local <= 2 and r_visita <= 2):
+            # --- NUEVO CÁLCULO DE GOLES CON TRASLADO Y CANCHAS ---
+            # Si el viaje es destructivo o es altura brava, los equipos bajan el ritmo al final (Menos goles)
+            if (r_local <= 2 and r_visita <= 2) or ("Altura" in geo_local["tipo"] and geo_local["traslado_complejo"] == 1 and r_visita <= 2):
                 goles_prediccion = "Menos de 2.5 Goles en el partido (Baja anotación)"
-                sustento_goles = "Ambos equipos vienen con pésima efectividad ofensiva y priorizarán cuidar el arco."
-            elif (r_local >= 4) or (r_visita <= 1):
-                goles_prediccion = "Más de 2.5 Goles (Tendencia Alta / Goleada Probable)"
-                sustento_goles = "El ataque del local viene encendido o la defensa visitante muestra facilidades críticas."
+                sustento_goles = "El desgaste del traslado pesado a la altura hará que la visita dosifique energías, priorizando defenderse en bloque bajo."
+            # Si el local vuela y la visita viene liquidada o el pasto sintético acelera el juego de ataque
+            elif (r_local >= 4) or (r_visita <= 1) or (geo_local["cancha"] == "Sintético" and r_local >= 3):
+                goles_prediccion = "Más de 2.5 Goles (Tendencia Alta / Goleada Probable) 🔥"
+                sustento_goles = "El dinamismo de la cancha o el colapso físico defensivo de la visita por el viaje/clima facilitará transiciones rápidas y goles."
             else:
                 goles_prediccion = "Más de 1.5 Goles totales (Línea segura)"
-                sustento_goles = "Dinámica estándar de torneo donde la necesidad obliga a mover las áreas."
+                sustento_goles = "Dinámica estándar donde las ventajas espaciales permitirán movimientos en las áreas."
 
-          # --- 2. CÁLCULO DE RESULTADO ---
-            if es_clima_extremo:
-                if p_visita <= 4 or p_visita >= 16:
-                    if r_visita >= 4:
-                        sug_resultado = "Ambos Anotan (Sí) o Empate"
-                    else:
-                        sug_resultado = f"Ganador Seco {local} (Local)"
+            # --- NUEVO CÁLCULO DE RESULTADO CON FACTOR LOGÍSTICO ---
+            # Si se junta Calor/Altura + Traslado matador o pasto sintético raro, la ventaja local es casi destructiva
+            if es_clima_extremo or geo_local["cancha"] == "Sintético" or geo_local["traslado_complejo"] == 1:
+                if p_visita >= 16 or r_visita <= 2:
+                    sug_resultado = f"Ganador Seco {local} (Local) 🔥 - Fija por Desgaste Extremo"
                 else:
                     sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
             else:
                 if r_local >= 4 and r_visita >= 4:
                     sug_resultado = "Ambos Anotan (Sí)"
                 elif p_local >= 16 or p_visita >= 16:
-                    sug_resultado = "Doble Oportunidad: Local o Visitante (No hay empate por desesperación de puntos)"
+                    sug_resultado = "Doble Oportunidad: Local o Visitante"
                 else:
                     sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
 
-            # --- 3. DETECTOR DE FIJAS (RADAR DE FUEGO) ---
-            es_la_fija = False
-            # Condición de Oro: Local en racha letal (>=4), visita en la lona (<=1) y clima extremo a favor
-            if r_local >= 4 and r_visita <= 1 and es_clima_extremo:
-                es_la_fija = True
-
-            # --- 4. MOSTRAR CUADRO FINAL EN PANTALLA ---
-            if es_la_fija:
-                st.warning(f"🔥 ¡LA FIJA DE LA FECHA DETECTADA! 🔥\n\nEste partido cumple con el patrón de Oro del algoritmo: El local domina las variables y la visita llega en crisis total.")
-            
-            texto_final = f"🎯 **Pronóstico de Resultado:** {sug_resultado}\n\n⚽ **Predicción de Goles:** {goles_prediccion}\n\n*Sustento:* {sustento_goles} {local} jugando en clima tipo ({geo_local['tipo']}) buscará imponer condiciones ante {visita}."
+            # --- MOSTRAR CUADRO FINAL EN PANTALLA ---
+            texto_final = f"🎯 **Pronóstico de Resultado:** {sug_resultado}\n\n⚽ **Predicción de Goles:** {goles_prediccion}\n\n*Sustento Logístico:* {local} explota su localía en cancha tipo {geo_local['cancha']} con clima {geo_local['tipo']}. El rival ({visita}) arrastra el impacto del factor traslado (Nivel: {geo_local['traslado_complejo']}) y su posición en el acumulado (Puesto {p_visita})."
             st.info(texto_final)
 else:
-    st.info("💡 Por favor, sube el archivo 'liga1_data.xlsx' a la raíz de tu repositorio de GitHub para inicializar los módulos predictivos.")
+    st.info("💡 Por favor, sube el archivo 'liga1_data.xlsx' para inicializar los módulos.")
