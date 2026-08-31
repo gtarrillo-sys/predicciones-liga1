@@ -188,39 +188,18 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
         else:
             es_clima_extremo = "Altura" in geo_local["tipo"] or "Calor" in geo_local["tipo"]
             
-            # --- CÁLCULO LOGÍSTICO DE GOLES PROBABLES ---
-            # Si ambos tienen mala racha o juegan en altura extrema, la tendencia es a la baja
-            if (r_local <= 2 and r_visita <= 2) or ("Altura" in geo_local["tipo"]):
+            # --- CÁLCULO LOGÍSTICO DE GOLES PROBABLES (OPTIMIZADO) ---
+            # Caso 1: Ambos equipos están en crisis total de goles
+            if (r_local <= 2 and r_visita <= 2):
                 goles_prediccion = "Menos de 2.5 Goles en el partido (Baja anotación)"
-                sustento_goles = "Ambos equipos vienen con baja efectividad ofensiva o la altura regulará el ritmo del partido en el segundo tiempo."
-            elif r_local >= 4 and r_visita >= 4:
-                goles_prediccion = "Más de 2.5 Goles (Partido de alta intensidad)"
-                sustento_goles = "Ambos equipos arrastran rachas muy altas de efectividad y proponen un juego ofensivo constante."
+                sustento_goles = "Ambos equipos vienen con pésima efectividad ofensiva y priorizarán no cometer errores."
+            
+            # Caso 2: El local es una máquina/goleador OR la visita defiende fatal (Racha 1 o menos es colador)
+            elif (r_local >= 4) or (r_visita <= 1):
+                goles_prediccion = "Más de 2.5 Goles (Tendencia Alta / Goleada Probable)"
+                sustento_goles = f"Alianza Atlético llega encendido en ataque (Racha: {r_local}/5). Además, UTC llega quebrado defensivamente (Racha: {r_visita}/5), lo que facilita transiciones rápidas y goles en el llano."
+            
+            # Caso 3: Choque estándar equilibrado
             else:
                 goles_prediccion = "Más de 1.5 Goles totales (Línea segura)"
-                sustento_goles = "Dinámica equilibrada de torneo donde la urgencia de puntos forzará al menos dos goles."
-
-            # --- SUGERENCIA DE RESULTADO ---
-            if es_clima_extremo:
-                if p_visita <= 4 or p_visita >= 16:
-                    if r_visita >= 4:
-                        sug_resultado = "Ambos Anotan (Sí) o Empate"
-                    else:
-                        sug_resultado = f"Ganador Seco {local} (Local)"
-                else:
-                    sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
-            else:
-                if r_local >= 4 and r_visita >= 4:
-                    sug_resultado = "Ambos Anotan (Sí)"
-                elif p_local >= 16 or p_visita >= 16:
-                    sug_resultado = "Doble Oportunidad: Local o Visitante (No hay empate por desesperación de puntos)"
-                else:
-                    sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
-
-            # --- MOSTRAR LOS RESULTADOS EN PANTALLA ---
-            st.info(f"""
-🎯 **Pronóstico de Resultado:** {sug_resultado}
-⚽ **Predicción de Goles:** {goles_prediccion}
-
-*Sustento:* {sustento_goles} {local} en su geografía ({geo_local['tipo']}) buscará asegurar puntos frente a un {visita} con presión en la tabla (Puesto {p_visita}).
-""")
+                sustento_goles = "Dinámica equilibrada de torneo donde la urgencia de puntos forzará movimientos en las áreas."
