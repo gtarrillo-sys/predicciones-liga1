@@ -88,23 +88,27 @@ if st.button("⚡ ANALIZAR PARTIDO CON SISTEMA 2.0", use_container_width=True):
     st.markdown("---")
     st.subheader(f"📊 Resultado del Análisis: {local} vs {visita}")
     
-    # Capa 1: Tabla
+    # Capa 1: Tabla (CORREGIDA CON TU OBSERVACIÓN)
     st.write("#### 🛡️ Capa 1: Contexto de Tabla y Presión")
     p_local = buscar_puesto_tabla(local)
     p_visita = buscar_puesto_tabla(visita)
     alertas_tabla = False
     
+    # Evaluar Presión del Local
     if p_local >= 15:
         st.warning(f"⚠️ {local} (Puesto {p_local}) está en zona de descenso. Partido de alta fricción/tarjetas.")
         alertas_tabla = True
-    elif p_local <= 3:
-        st.info(f"🔥 {local} (Puesto {p_local}) pelea el título. Presión alta por ganar en casa.")
+    elif p_local <= 5:
+        st.info(f"🔥 {local} (Puesto {p_local}) pelea los primeros puestos. Presión alta por ganar en casa.")
         
+    # Evaluar Presión de la Visita
     if p_visita >= 15:
-        st.warning(f"⚠️ {visita} (Puesto {p_visita}) pelea el descenso. Se espera bus atrás.")
+        st.warning(f"⚠️ {visita} (Puesto {p_visita}) pelea el descenso. Se espera que se encierre atrás.")
         alertas_tabla = True
+    elif p_visita <= 5:
+        st.info(f"🔥 {visita} (Puesto {p_visita}) es animador del torneo y pelea arriba. Obligado a buscar puntos de visita.")
         
-    if not alertas_tabla and p_local > 3:
+    if not alertas_tabla and p_local > 5 and p_visita > 5:
         st.success("✅ Presión de tabla moderada. Flujo de juego limpio esperado.")
 
     # Capa 2: Finanzas
@@ -120,16 +124,17 @@ if st.button("⚡ ANALIZAR PARTIDO CON SISTEMA 2.0", use_container_width=True):
     else:
         st.success("✅ Filtro Limpio: Sin reportes de deudas ni huelgas activas.")
 
-    # Capa 3: Veredicto
+    # Capa 3: Veredicto (LOGICA RECALIBRADA CON LA NUEVA PRESIÓN)
     st.write("#### 🧠 Capa 3: Sugerencia del Algoritmo")
     if crisis_activa:
         st.error("❌ APUESTA BLOQUEADA: El riesgo extra-cancha por problemas económicos es muy alto.")
     else:
         geo_local = DATA_GEOGRAFICA[local]
         if "Altura" in geo_local["tipo"] or "Calor" in geo_local["tipo"]:
-            if p_visita <= 4:
-                st.info(f"🎯 **Sugerencia:** Ambos Anotan (Sí) O Más de 1.5 Goles.\n\n*Sustento:* {local} tiene la ventaja de {geo_local['tipo']}, pero {visita} va arriba en la tabla y está obligado a proponer.")
+            # Si el visitante es un grande que pelea arriba (puesto 5 o menos)
+            if p_visita <= 5:
+                st.info(f"🎯 **Sugerencia:** Ambos Anotan (Sí) O Más de 1.5 Goles.\n\n*Sustento:* {local} tiene la ventaja de {geo_local['tipo']}, pero {visita} es animador del torneo (Puesto {p_visita}) y está obligado a proponer. No se va a encerrar.")
             else:
-                st.info(f"🎯 **Sugerencia:** Ganador Seco {local}.\n\n*Sustento:* La ventaja climática ({geo_local['tipo']}) es determinante contra un rival de zona media/baja.")
+                st.info(f"🎯 **Sugerencia:** Ganador Seco {local}.\n\n*Sustento:* La ventaja climática ({geo_local['tipo']}) es determinante contra un rival de zona media/baja que no tiene la obligación extrema de proponer.")
         else:
             st.info("🎯 **Sugerencia:** Total de Goles: Más de 1.5 O Doble Oportunidad Local.\n\n*Sustento:* Condiciones estándar. Con planteles estables, se juega bajo inercia normal.")
