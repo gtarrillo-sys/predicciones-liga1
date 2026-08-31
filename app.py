@@ -181,25 +181,46 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
         else:
             st.success("✅ Filtro Financiero Limpio: Sin deudas ni huelgas reportadas en las últimas horas.")
 
-       # CAPA 4: SUGERENCIA FINAL CON PREDICCIÓN DE GOLES FIJA
+       # =====================================================================
+        # CAPA 4: SUGERENCIA FINAL DEL SISTEMA (CORREGIDO)
+        # =====================================================================
         st.write("#### 🧠 Capa 4: Sugerencia Final del Sistema")
+        
         if crisis_activa:
             st.error("❌ APUESTA BLOQUEADA: Alto peligro institucional. Los problemas de sueldos rompen cualquier lógica deportiva.")
         else:
             es_clima_extremo = "Altura" in geo_local["tipo"] or "Calor" in geo_local["tipo"]
             
-            # --- CÁLCULO LOGÍSTICO DE GOLES PROBABLES (OPTIMIZADO) ---
-            # Caso 1: Ambos equipos están en crisis total de goles
+            # --- 1. CÁLCULO DE GOLES ---
             if (r_local <= 2 and r_visita <= 2):
                 goles_prediccion = "Menos de 2.5 Goles en el partido (Baja anotación)"
-                sustento_goles = "Ambos equipos vienen con pésima efectividad ofensiva y priorizarán no cometer errores."
-            
-            # Caso 2: El local es una máquina/goleador OR la visita defiende fatal (Racha 1 o menos es colador)
+                sustento_goles = "Ambos equipos vienen con pésima efectividad ofensiva y priorizarán cuidar el arco."
             elif (r_local >= 4) or (r_visita <= 1):
                 goles_prediccion = "Más de 2.5 Goles (Tendencia Alta / Goleada Probable)"
-                sustento_goles = f"Alianza Atlético llega encendido en ataque (Racha: {r_local}/5). Además, UTC llega quebrado defensivamente (Racha: {r_visita}/5), lo que facilita transiciones rápidas y goles en el llano."
-            
-            # Caso 3: Choque estándar equilibrado
+                sustento_goles = "El ataque del local viene encendido o la defensa visitante muestra facilidades críticas."
             else:
                 goles_prediccion = "Más de 1.5 Goles totales (Línea segura)"
-                sustento_goles = "Dinámica equilibrada de torneo donde la urgencia de puntos forzará movimientos en las áreas."
+                sustento_goles = "Dinámica estándar de torneo donde la necesidad obliga a mover las áreas."
+
+            # --- 2. CÁLCULO DE RESULTADO ---
+            if es_clima_extremo:
+                if p_visita <= 4 or p_visita >= 16:
+                    if r_visita >= 4:
+                        sug_resultado = "Ambos Anotan (Sí) o Empate"
+                    else:
+                        sug_resultado = f"Ganador Seco {local} (Local)"
+                else:
+                    sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
+            else:
+                if r_local >= 4 and r_visita >= 4:
+                    sug_resultado = "Ambos Anotan (Sí)"
+                elif p_local >= 16 or p_visita >= 16:
+                    sug_resultado = "Doble Oportunidad: Local o Visitante (No hay empate por desesperación de puntos)"
+                else:
+                    sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
+
+            # --- 3. MOSTRAR CUADRO FINAL EN PANTALLA ---
+            texto_final = f"🎯 **Pronóstico de Resultado:** {sug_resultado}\n\n⚽ **Predicción de Goles:** {goles_prediccion}\n\n*Sustento:* {sustento_goles} {local} jugando en clima tipo ({geo_local['tipo']}) buscará imponer condiciones ante {visita}."
+            st.info(texto_final)
+else:
+    st.info("💡 Por favor, sube el archivo 'liga1_data.xlsx' a la raíz de tu repositorio de GitHub para inicializar los módulos predictivos.")
