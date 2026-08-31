@@ -1,5 +1,6 @@
 import datetime
 import pandas as pd
+import streamlit as st
 
 # ==========================================
 # 1. CONSTANTES Y CONFIGURACIÓN CLIMÁTICA
@@ -8,8 +9,7 @@ PLAZAS_CALOR_EXTREMO = ["Piura", "Sullana", "Tarapoto", "Chiclayo", "Iquitos"]
 
 def calcular_factor_horario(hora_str, plaza):
     """
-    Capa Nueva: Calcula el multiplicador de desgaste físico según la hora y la ciudad.
-    Soporta formatos 'HH:M' o 'HH:MM:SS'
+    Calcula el multiplicador de desgaste físico según la hora y la ciudad.
     """
     try:
         hora_obj = datetime.datetime.strptime(str(hora_str).strip(), "%H:%M").time()
@@ -19,76 +19,80 @@ def calcular_factor_horario(hora_str, plaza):
             hora_obj = datetime.datetime.strptime(str(hora_str).strip(), "%H:%M:%S").time()
             hora_decimal = hora_obj.hour + (hora_obj.minute / 60.0)
         except Exception:
-            return 1.0, "🌙 Filtro Estándar / Condiciones Óptimas"
+            return 1.0, "🌙 Filtro Estandár / Condiciones Óptimas", "info"
 
     if plaza in PLAZAS_CALOR_EXTREMO:
-        # Bloque 1: 1:00 p.m. a 3:30 p.m. -> Calor Extremo
         if 13.0 <= hora_decimal <= 15.5:
-            return 1.3, "⚠️ FILTRO ACTIVO: Calor Extremo / Fatiga Crítica de Visita"
-        # Bloque 2: 3:31 p.m. a 5:30 p.m. -> Transición Térmica
+            return 1.3, "⚠️ FILTRO ACTIVO: Calor Extremo / Fatiga Crítica de Visita", "error"
         elif 15.5 < hora_decimal <= 17.5:
-            return 1.15, "⏳ Filtro Neutro: Transición Térmica"
+            return 1.15, "⏳ Filtro Neutro: Transición Térmica", "warning"
         
-    return 1.0, "🌙 Filtro Nocturno / Condiciones Óptimas"
+    return 1.0, "🌙 Filtro Nocturno / Condiciones Óptimas", "success"
 
 # ==========================================
-# 2. MOTOR PRINCIPAL DEL SISTEMA (4 CAPAS)
+# 2. INTERFAZ VISUAL EN STREAMLIT
 # ==========================================
-def procesar_sistema_prediccion(local, visita, fecha, hora, plaza, desgaste_logistico=False):
-    # Calcular el nuevo factor de fecha y hora
-    factor_clima, alerta_clima = calcular_factor_horario(hora, plaza)
+st.set_page_config(page_title="Predicciones Liga 1", page_icon="⚽", layout="centered")
+
+st.title("🔮 Sistema de Predicciones - Liga 1")
+st.markdown("Configura los datos del partido para actualizar el algoritmo en tiempo real.")
+
+# Formulario de entrada de datos
+with st.sidebar:
+    st.header("⚙️ Parámetros del Partido")
+    local = st.text_input("Equipo Local", "Atlético Grau")
+    visita = st.text_input("Equipo Visitante", "FBC Melgar")
+    fecha = st.date_input("Fecha del Partido", datetime.date(2026, 9, 1))
+    hora = st.text_input("Hora del Partido (HH:MM)", "15:00")
+    plaza = st.selectbox("Plaza / Ciudad", ["Piura", "Sullana", "Lima", "Arequipa", "Cajamarca", "Chiclayo", "Tarapoto"])
+    desgaste_logistico = st.checkbox("¿Alerta de viaje/vuelos para la visita?", value=True)
+
+# Botón para ejecutar el motor
+if st.button("🚀 Procesar Predicción con Inteligencia Artificial"):
     
-    # --- CAPA 1: Presión por Objetivos ---
-    # (Aquí tu código leería los puntos reales de liga1_data.xlsx)
-    capa1_txt = f"* **{local}:** Motivación máxima. Si gana, pelea la punta del Clausura.\n* **{visita}:** Obligado a sumar afuera para no colgarse de la Tabla Acumulada."
+    # Procesar lógica de Fecha, Hora y Clima
+    factor_clima, alerta_clima, tipo_alerta = calcular_factor_horario(hora, plaza)
     
-    # --- CAPA 2: Estado de Forma y Alertas de Desgaste ---
-    alerta_transporte = ""
+    # --- INTERFAZ: CABECERA DEL INFORME ---
+    st.markdown("---")
+    st.subheader(f"📊 INFORME DEL PARTIDO: {local} vs {visita}")
+    st.markdown(f"📅 **Fecha:** {fecha.strftime('%d/%m/%m%Y')} | ⏰ **Hora:** {hora} ({plaza})")
+    
+    # Mostrar banner dinámico según el clima
+    if tipo_alerta == "error":
+        st.error(alerta_clima)
+    elif tipo_alerta == "warning":
+        st.warning(alerta_clima)
+    else:
+        st.success(alerta_clima)
+    st.markdown("---")
+    
+    # --- CAPA 1: Objetivos ---
+    st.markdown("### 🛡️ Capa 1: Presión por Objetivos")
+    st.write(f"* **{local}:** Motivación máxima. Si gana, se prende arriba en el Clausura.")
+    st.write(f"* **{visita}:** Obligado a sumar para mantenerse en los puestos de arriba del Acumulado.")
+    
+    # --- CAPA 2: Forma y Desgaste ---
+    st.markdown("### 📈 Capa 2: Estado de Forma y Alertas de Desgaste")
+    st.write(f"* **Racha:** Ambos vienen en buen momento. {local} llega con confianza extrema tras golear 3-1 a UTC en Cajamarca.")
+    st.write(f"* 🏟️ **Cancha:** Grass Natural en el calor de {plaza}.")
     if desgaste_logistico:
-        alerta_transporte = f"\n* 🚌 **¡ALERTA CRÍTICA DE TRASLADO! (Nivel: 1):** El plantel de {visita} sufrió cancelaciones de vuelos y reprogramaciones de última hora. Llegan con desgaste mental y físico atípico."
+        st.markdown(f"> 🚌 **¡ALERTA CRÍTICA DE TRASLADO!**: El plantel de {visita} sufrió problemas logísticos graves con sus vuelos. Llegan con fatiga acumulada.")
+        
+    # --- CAPA 3: Extra-Cancha ---
+    st.markdown("### 🕵️‍♂️ Capa 3: Filtro Extra-Cancha")
+    st.write("* **Filtro Financiero Limpio:** Sin problemas de pagos o planteles en huelga.")
     
-    capa2_txt = f"* **Racha:** Ambos vienen firmes. {local} con confianza alta tras su última victoria de visita (3-1 en Cajamarca).\n* 🏟️ **Gramado:** Se juega sobre Cancha Natural en {plaza}.{alerta_transporte}"
+    # --- CAPA 4: Predicción Final Algorítmica ---
+    st.markdown("### 🧠 Capa 4: Sugerencia Final del Sistema")
     
-    # --- CAPA 3: Filtro Extra-Cancha (Financiero) ---
-    capa3_txt = "* **Filtro Financiero Limpio:** Sin alertas de deudas o huelgas de SAFAP en ninguno de los dos planteles."
-    
-    # --- CAPA 4: Sugerencia Final Ajustada por el Factor Horario ---
-    # Lógica algorítmica: Si hay calor extremo (1.3) y desgaste logístico, se castiga severamente la resistencia de la visita
+    # El algoritmo toma decisiones basadas en el nuevo factor de fecha/hora
     if factor_clima == 1.3 and desgaste_logistico:
-        pronostico_resultado = f"**Ganador Seco {local} (Local) 🔥 - Fija por Desgaste Extraordinario y Clima**"
-        pronostico_goles = "**Más de 2.5 Goles en el partido (Tendencia Alta) 🔥**\n    * *Sustento:* El local viene fino de cara al gol (3-1 previo). El desgaste del viaje combinado con las pocas piernas que le quedarán a la defensa de {visita} a partir del min 60 por los 30°C abrirá espacios claros."
+        pronostico_resultado = f"**Ganador Seco {local} (Local) 🔥**"
+        pronostico_goles = f"**Más de 2.5 Goles (Tendencia Alta) 🔥** \n\n *Sustento:* El ritmo ofensivo de {local} (3 goles de visita previos) sumado a la caída física de la defensa de {visita} por el calor de las 3 p.m. y el viaje abrirá el arco en el segundo tiempo."
     else:
         pronostico_resultado = f"**Doble Oportunidad: {local} o Empate (1X)**"
-        pronostico_goles = "**Menos de 2.5 Goles (Partido cerrado por oficio de la visita)**"
-
-    # ==========================================
-    # 3. GENERACIÓN DEL REPORTE VISUAL (OUTPUT)
-    # ==========================================
-    print("---" * 15)
-    print(f"📊 INFORME DEL PARTIDO: {local} vs {visita}")
-    print(f"📅 Fecha: {fecha} | ⏰ Hora: {hora} ({plaza}) | {alerta_clima}")
-    print("---" * 15)
-    print("\n### 🛡️ Capa 1: Presión por Objetivos")
-    print(capa1_txt)
-    print("\n### 📈 Capa 2: Estado de Forma y Alertas de Desgaste")
-    print(capa2_txt)
-    print("\n### 🕵️‍♂️ Capa 3: Filtro Extra-Cancha")
-    print(capa3_txt)
-    print("\n### 🧠 Capa 4: Sugerencia Final del Sistema")
-    print(f"* 🎯 **Pronóstico de Resultado:** {pronostico_resultado}")
-    print(f"* ⚽ **Predicción de Goles:** {pronostico_goles}")
-    print("---" * 15)
-
-# ==========================================
-# 4. EJECUCIÓN / SIMULACIÓN DE PRUEBA
-# ==========================================
-if __name__ == "__main__":
-    # Simulación exacta del partido de mañana usando tus datos reales
-    procesar_sistema_prediccion(
-        local="Atlético Grau",
-        visita="FBC Melgar",
-        fecha="01/09/2026",
-        hora="15:00",
-        plaza="Piura",
-        desgaste_logistico=True # Activamos la alerta de los aviones que detectamos
-    )
+        pronostico_goles = "**Menos de 2.5 Goles (Pronóstico estándar reservado)**"
+        
+    st.info(f"🎯 **Pronóstico de Resultado:** {pronostico_resultado}")
+    st.success(f"⚽ **Predicción de Goles:** {pronostico_goles}")
