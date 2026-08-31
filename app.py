@@ -1,103 +1,3 @@
-import datetime
-import requests
-from bs4 import BeautifulSoup
-import streamlit as st
-import pandas as pd
-
-# =====================================================================
-# 1. CONFIGURACIÓN DE LA PÁGINA WEB (STREAMLIT)
-# =====================================================================
-st.set_page_config(
-    page_title="Sistema Predictivo Liga 1 Pro", 
-    page_icon="🤖", 
-    layout="centered"
-)
-
-st.title("🤖 Sistema de Apuestas Profesional 2.0")
-st.markdown("### Motor de Predicción: Geografía + Tabla Acumulada + Factor Racha + Radar Financiero")
-st.markdown("---")
-
-# =====================================================================
-# 2. CARGA DE BASE DE DATOS INTELIGENTE DESDE EXCEL
-# =====================================================================
-PALABRAS_CRITICAS = ["sueldos", "deuda", "safap", "paro", "no concentran", "licencias", "resta de puntos", "huelga"]
-
-@st.cache_data
-def cargar_base_de_datos():
-    try:
-        df_tabla = pd.read_excel("liga1_data.xlsx", sheet_name="Tabla_Posiciones")
-        df_geo = pd.read_excel("liga1_data.xlsx", sheet_name="Data_Geografica")
-        
-        lista_partidos_fecha = []
-        nombre_jornada = "Jornada Actual"
-        
-        # Leer la nueva pestaña de partidos fijos desde tu Excel manual
-        try:
-            df_partidos = pd.read_excel("liga1_data.xlsx", sheet_name="Partidos_Fecha")
-            if "Jornada" in df_partidos.columns and not df_partidos.empty:
-                nombre_jornada = str(df_partidos["Jornada"].iloc[0])
-            
-            for _, row in df_partidos.iterrows():
-                lista_partidos_fecha.append({
-                    "texto": f"⚽ {row['Local']} vs {row['Visitante']}",
-                    "local": row['Local'],
-                    "visita": row['Visitante']
-                })
-        except:
-            pass
-        
-        tabla_dict = dict(zip(df_tabla["Puesto"], df_tabla["Club"]))
-        
-        geo_dict = {}
-        for _, row in df_geo.iterrows():
-            geo_dict[row["Club"]] = {
-                "ciudad": row["Ciudad"],
-                "tipo": row["Tipo_Clima"],
-                "factor_local": float(row["Factor_Local"])
-            }
-            
-        racha_dict = dict(zip(df_geo["Club"], df_geo["Racha"] if "Racha" in df_geo.columns else [3]*18))
-        
-        return tabla_dict, geo_dict, racha_dict, lista_partidos_fecha, nombre_jornada
-    except Exception as e:
-        st.error(f"❌ Error crítico al cargar 'liga1_data.xlsx'. Detalle: {e}")
-        return {}, {}, {}, [], "Error"
-
-TABLA_ACUMULADA, DATA_GEOGRAFICA, FACTOR_RACHA, PARTIDOS_PROGRAMADOS, NOMBRE_JORNADA = cargar_base_de_datos()
-
-# =====================================================================
-# 3. FUNCIONES LÓGICAS Y RASTREADORES
-# =====================================================================
-def obtener_puesto_acumulado(equipo):
-    for puesto, nombre in TABLA_ACUMULADA.items():
-        if equipo.lower() in nombre.lower() or nombre.lower() in equipo.lower(): 
-            return puesto
-    return 99
-
-def mapear_nombre_estandar(equipo_raw):
-    for nombre_real in DATA_GEOGRAFICA.keys():
-        if equipo_raw.lower() in nombre_real.lower() or nombre_real.lower() in equipo_raw.lower():
-            return nombre_real
-    return equipo_raw
-
-def escanear_crisis_financiera(equipo):
-    url_fuente = "https://www.ovacion.pe/rss"
-    alertas_encontradas = []
-    try:
-        response = requests.get(url_fuente, timeout=5)
-        soup = BeautifulSoup(response.content, 'xml')
-        items = soup.find_all('item')
-        for item in items:
-            texto = (item.title.text.lower() if item.title else "") + " " + (item.description.text.lower() if item.description else "")
-            if equipo.lower() in texto:
-                for palabra in PALABRAS_CRITICAS:
-                    if palabra in texto:
-                        alertas_encontradas.append(f"🚨 Alerta Ovación: '{item.title.text}'")
-                        break
-    except:
-        pass
-    return list(set(alertas_encontradas))
-
 # =====================================================================
 # 4. INTERFAZ DE USUARIO INTERACTIVA
 # =====================================================================
@@ -109,7 +9,9 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
     
     if PARTIDOS_PROGRAMADOS:
         st.write(f"#### 🗓️ Análisis Planificado: **{NOMBRE_JORNADA}**")
-        opciones_partidos = ["🔄 Hacer un Cruce Manual / Libre"] + [p["texto"] for p in PARTIDOS_PROGRAMADOS]
+        
+        # Ponemos los 9 partidos primero para que el primero de la lista salga por defecto
+        opciones_partidos = [p["texto"] for p in PARTIDOS_PROGRAMADOS] + ["🔄 Hacer un Cruce Manual / Libre"]
         partido_seleccionado = st.selectbox("Selecciona uno de los 9 partidos de la fecha:", opciones_partidos)
         
         if partido_seleccionado != "🔄 Hacer un Cruce Manual / Libre":
@@ -139,7 +41,7 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
         r_visita = FACTOR_RACHA.get(visita, 3)
         geo_local = DATA_GEOGRAFICA[local]
 
-        # CAPA 1
+        # CAPA 1: TABLA ACUMULADA
         st.write("#### 🛡️ Capa 1: Presión por Objetivos (Tabla Acumulada)")
         if p_local <= 4:
             st.info(f"🏆 {local} (Puesto {p_local}) defiende zona de Copa Libertadores. Motivación económica máxima.")
@@ -155,7 +57,7 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
         elif p_visita >= 16:
             st.warning(f"⚠️ {visita} (Puesto {p_visita}) pelea el DESCENSO. Planteará un bloque defensivo muy bajo (bus atrás).")
 
-        # CAPA 2
+        # CAPA 2: RACHA
         st.write("#### 📈 Capa 2: Termómetro de Forma Reciente (Racha)")
         if r_local >= 4:
             st.success(f"🟩 {local} viene en inercia ganadora (Racha: {r_local}/5). Confianza alta que disminuye el cansancio.")
@@ -167,9 +69,9 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
         elif r_visita <= 2:
             st.error(f"🟥 {visita} está golpeado anímicamente (Racha: {r_visita}/5). Propensión a errores defensivos forzados.")
 
-        # CAPA 3
+        # CAPA 3: FILTRO FINANCIERO
         st.write("#### 🕵️‍♂️ Capa 3: Filtro Extra-Cancha (Problemas de Pagos)")
-        with st.spinner("Escaneando diarios deportivos y alertas de huelgas..."):
+        with st.spinner("Escaneando diarios deportivos..."):
             alertas_finanzas = escanear_crisis_financiera(local) + escanear_crisis_financiera(visita)
         
         crisis_activa = False
@@ -180,7 +82,7 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
         else:
             st.success("✅ Filtro Financiero Limpio: Sin deudas ni huelgas reportadas en las últimas horas.")
 
-        # CAPA 4
+        # CAPA 4: SUGERENCIA FINAL
         st.write("#### 🧠 Capa 4: Sugerencia Final del Sistema")
         if crisis_activa:
             st.error("❌ APUESTA BLOQUEADA: Alto peligro institucional. Los problemas de sueldos rompen cualquier lógica deportiva.")
@@ -199,5 +101,3 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
                     st.info("🎯 **Sugerencia Óptima:** Ambos Anotan (Sí) O Más de 2.5 Goles.\n\n*Sustento:* Choque de poderes en condiciones climáticas neutras. Ambos equipos vienen con las rachas encendidas e inercias de ataque altas.")
                 else:
                     st.info("🎯 **Sugerencia Óptima:** Menos de 3.5 Goles O Más de 1.5 Goles en total.\n\n*Sustento:* Dinámica regular de juego en llano sin factores externos de distorsión.")
-else:
-    st.info("💡 Por favor, sube el archivo 'liga1_data.xlsx' a la raíz de tu repositorio de GitHub para inicializar los módulos predictivos.")
