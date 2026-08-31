@@ -1,15 +1,22 @@
 import datetime
 import requests
 from bs4 import BeautifulSoup
+import streamlit as st
 
 # =====================================================================
-# 1. CONFIGURACIÓN DE BASE DE DATOS DEL SISTEMA
+# CONFIGURACIÓN DE PÁGINA WEB (STREAMLIT)
 # =====================================================================
+st.set_page_config(page_title="Sistema de Apuestas 2.0", page_icon="🤖", layout="centered")
 
-# Palabras clave para el Radar Financiero y de Crisis Extra-cancha
+st.title("🤖 Sistema de Apuestas 2.0")
+st.subtitle("Filtro Avanzado: Geografía + Tabla + Radar Financiero")
+st.markdown("---")
+
+# =====================================================================
+# BASE DE DATOS INTEGRADA
+# =====================================================================
 PALABRAS_CRITICAS = ["sueldos", "deuda", "safap", "paro", "no concentran", "licencias", "resta de puntos", "huelga"]
 
-# Diccionario Geográfico de la Liga 1 (Estadio, Altura/Clima, Factor de Ventaja)
 DATA_GEOGRAFICA = {
     "Alianza Lima": {"ciudad": "Lima", "tipo": "Llano", "factor_local": 1.2},
     "Universitario": {"ciudad": "Lima", "tipo": "Llano", "factor_local": 1.25},
@@ -31,7 +38,6 @@ DATA_GEOGRAFICA = {
     "UTC": {"ciudad": "Cajamarca", "tipo": "Altura Media", "factor_local": 1.25}
 }
 
-# Tabla Acumulada Oficial (Actualizable cada jornada)
 TABLA_ACUMULADA = {
     1: "Alianza Lima", 2: "Universitario", 3: "Deportivo Garcilaso", 
     4: "Chankas CYC", 5: "Melgar", 6: "Cusco", 7: "Cienciano", 
@@ -42,127 +48,88 @@ TABLA_ACUMULADA = {
 }
 
 # =====================================================================
-# 2. MÓDULOS DE PROCESAMIENTO (REGLAS DE NEGOCIO)
+# FUNCIONES LÓGICAS
 # =====================================================================
-
 def buscar_puesto_tabla(equipo):
-    """Busca la posición exacta de un equipo en la tabla mapeada."""
     for puesto, nombre in TABLA_ACUMULADA.items():
-        if equipo.lower() in nombre.lower():
-            return puesto
+        if equipo == nombre: return puesto
     return 99
 
 def escanear_crisis_financiera(equipo):
-    """Escanea portales de noticias deportivos (RSS) buscando alertas financieras del equipo."""
-    fuentes_rss = [
-        "https://www.ovacion.pe/rss",
-        # Puedes agregar más urls de feeds RSS aquí (Rpp, Líbero, etc.)
-    ]
+    url_fuente = "https://www.ovacion.pe/rss"
     alertas_encontradas = []
-    
-    for url in fuentes_rss:
-        try:
-            response = requests.get(url, timeout=8)
-            soup = BeautifulSoup(response.content, 'xml')
-            items = soup.find_all('item')
-            
-            for item in items:
-                titulo = item.title.text.lower() if item.title else ""
-                descripcion = item.description.text.lower() if item.description else ""
-                contenido_noticia = titulo + " " + descripcion
-                
-                # Si se menciona al equipo en la noticia
-                if equipo.lower() in contenido_noticia:
-                    for palabra in PALABRAS_CRITICAS:
-                        if palabra in contenido_noticia:
-                            alertas_encontradas.append(f"🚨 CRISIS DETECTADA: '{palabra.upper()}' hallado en: '{item.title.text}'")
-                            break
-        except Exception:
-            # Si una fuente RSS se cae, el sistema continúa con el resto
-            pass
-            
+    try:
+        response = requests.get(url_fuente, timeout=5)
+        soup = BeautifulSoup(response.content, 'xml')
+        items = soup.find_all('item')
+        for item in items:
+            texto = (item.title.text.lower() if item.title else "") + " " + (item.description.text.lower() if item.description else "")
+            if equipo.lower() in texto:
+                for palabra in PALABRAS_CRITICAS:
+                    if palabra in texto:
+                        alertas_encontradas.append(f"🚨 Noticia Crítica: '{item.title.text}'")
+                        break
+    except:
+        pass
     return list(set(alertas_encontradas))
 
-def calcular_pesos_y_pronostico(local, visita, alertas_tabla, crisis_activa):
-    """Cruza todas las capas y genera la recomendación final del sistema."""
-    print("\n[🧠 CAPA DE DECISIÓN FINAL: ALGORITMO INTEGRADO]")
-    
-    if crisis_activa:
-        print("❌ VEREDICTO: APUESTA BLOQUEADA COMPLETAMENTE.")
-        print("💡 Motivo: El riesgo extra-cancha por deudas/huelgas destruye cualquier probabilidad lógica.")
-        return
-
-    geo_local = DATA_GEOGRAFICA.get(local, {"tipo": "Desconocido", "factor_local": 1.0})
-    puesto_local = buscar_puesto_tabla(local)
-    puesto_visita = buscar_puesto_tabla(visita)
-    
-    # Lógica de Recomendación Automatizada
-    if "Altura Extremada" in geo_local["tipo"] or "Calor Extremo" in geo_local["tipo"]:
-        if puesto_visita <= 4:
-            # Visita arriba en la tabla, no se va a regalar a pesar de la geografía dura
-            print(f"🎯 SUGERENCIA: Ambos Equipos Anotan (Sí) O Más de 1.5 Goles.")
-            print(f"📝 Sustento: {local} tiene la ventaja climática ({geo_local['tipo']}), pero {visita} va superior en la tabla y está obligado a proponer y buscar goles.")
-        else:
-            print(f"🎯 SUGERENCIA: Ganador Seco {local} ó {local} + Más de 1.5 goles.")
-            print(f"📝 Sustento: La geografía extrema ({geo_local['tipo']}) favorece al local, y la visita no tiene la urgencia o jerarquía alta en la tabla para contrarrestarlo.")
-    else:
-        # Partidos en el llano o condiciones estables
-        print("🎯 SUGERENCIA: Total de Goles: Más de 1.5 O Doble Oportunidad Local/Empate.")
-        print("📝 Sustento: Condiciones de juego estables y planteles financieramente limpios. Se juega por inercia futbolística estándar.")
-
 # =====================================================================
-# 3. INTERFAZ DE CONTROL (EJECUCIÓN PRINCIPAL)
+# INTERFAZ DE USUARIO INTERACTIVA
 # =====================================================================
+lista_equipos = sorted(list(DATA_GEOGRAFICA.keys()))
 
-def ejecutar_protocolo_sistema_2_0(local, visita):
-    print("=" * 70)
-    print(f"🤖 RUNNING SISTEMA DE APUESTAS 2.0 - LIGA 1 PERÚ")
-    print(f"Control de Jornada - Hora de consulta: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
-    print("=" * 70)
+col1, col2 = st.columns(2)
+with col1:
+    local = st.selectbox("Selecciona Equipo Local:", lista_equipos, index=lista_equipos.index("Atlético Grau"))
+with col2:
+    visita = st.selectbox("Selecciona Equipo Visitante:", lista_equipos, index=lista_equipos.index("Melgar"))
+
+if st.button("⚡ ANALIZAR PARTIDO CON SISTEMA 2.0", use_container_width=True):
+    st.markdown("---")
+    st.subheader(f"📊 Resultado del Análisis: {local} vs {visita}")
     
-    # --- CAPA 1: EVALUACIÓN DE TABLA Y CONTEXTO PSICOLÓGICO ---
-    print("\n[📊 CAPA 1: ANALIZANDO TABLA ACUMULADA Y CONTEXTO]")
+    # Capa 1: Tabla
+    st.write("#### 🛡️ Capa 1: Contexto de Tabla y Presión")
     p_local = buscar_puesto_tabla(local)
     p_visita = buscar_puesto_tabla(visita)
     alertas_tabla = False
     
-    if p_local == 99 or p_visita == 99:
-        print("⚠️ Advertencia: Uno de los equipos no fue localizado correctamente en el mapa de la tabla.")
-    
     if p_local >= 15:
-        print(f"⚠️ Alerta de Fricción: {local} (Puesto {p_local}) está en ZONA DE DESCENSO. Alto riesgo de tarjetas rojas.")
+        st.warning(f"⚠️ {local} (Puesto {p_local}) está en zona de descenso. Partido de alta fricción/tarjetas.")
         alertas_tabla = True
     elif p_local <= 3:
-        print(f"🔥 Alerta de Ansiedad: {local} (Puesto {p_local}) pelea el LIDERATO. Presión alta en los primeros 20 minutos.")
+        st.info(f"🔥 {local} (Puesto {p_local}) pelea el título. Presión alta por ganar en casa.")
         
     if p_visita >= 15:
-        print(f"⚠️ Alerta de Resistencia: {visita} (Puesto {p_visita}) pelea el DESCENSO. Plantamiento ultra-defensivo esperado.")
+        st.warning(f"⚠️ {visita} (Puesto {p_visita}) pelea el descenso. Se espera bus atrás.")
         alertas_tabla = True
         
-    if not alertas_tabla:
-        print("✅ Contexto de tabla regular. Sin distorsiones extremas por baja presión.")
+    if not alertas_tabla and p_local > 3:
+        st.success("✅ Presión de tabla moderada. Flujo de juego limpio esperado.")
 
-    # --- CAPA 2: RADAR AUTOMATIZADO DE CRISIS ECONÓMICA ---
-    print("\n[🕵️‍♂️ CAPA 2: EJECUTANDO RADAR DE CRISIS FINANCIERA (SCRAPING)]")
-    print(f"Buscando anomalías institucionales para {local} y {visita}...")
+    # Capa 2: Finanzas
+    st.write("#### 🕵️‍♂️ Capa 2: Escáner Financiero en Tiempo Real")
+    with st.spinner("Buscando deudas o huelgas en internet..."):
+        alertas_finanzas = escanear_crisis_financiera(local) + escanear_crisis_financiera(visita)
     
-    alertas_finanzas = escanear_crisis_financiera(local) + escanear_crisis_financiera(visita)
     crisis_activa = False
-    
     if alertas_finanzas:
         crisis_activa = True
         for alerta in alertas_finanzas:
-            print(alerta)
+            st.error(alerta)
     else:
-        print("✅ Filtro Limpio: No se detectaron huelgas, deudas ni problemas de planillas vigentes.")
+        st.success("✅ Filtro Limpio: Sin reportes de deudas ni huelgas activas.")
 
-    # --- CAPA 3: CRUCE Y GENERACIÓN DE RECOMENDACIÓN ---
-    calcular_pesos_y_pronostico(local, visita, alertas_tabla, crisis_activa)
-    print("=" * 70 + "\n")
-
-# =====================================================================
-# ZONA DE PRUEBA EN VIVO
-# =====================================================================
-if __name__ == "__main__":
-    # Probamos el partido del cierre: Grau vs Melgar
-    ejecutar_protocolo_sistema_2_0("Atlético Grau", "Melgar")
+    # Capa 3: Veredicto
+    st.write("#### 🧠 Capa 3: Sugerencia del Algoritmo")
+    if crisis_activa:
+        st.error("❌ APUESTA BLOQUEADA: El riesgo extra-cancha por problemas económicos es muy alto.")
+    else:
+        geo_local = DATA_GEOGRAFICA[local]
+        if "Altura" in geo_local["tipo"] or "Calor" in geo_local["tipo"]:
+            if p_visita <= 4:
+                st.info(f"🎯 **Sugerencia:** Ambos Anotan (Sí) O Más de 1.5 Goles.\n\n*Sustento:* {local} tiene la ventaja de {geo_local['tipo']}, pero {visita} va arriba en la tabla y está obligado a proponer.")
+            else:
+                st.info(f"🎯 **Sugerencia:** Ganador Seco {local}.\n\n*Sustento:* La ventaja climática ({geo_local['tipo']}) es determinante contra un rival de zona media/baja.")
+        else:
+            st.info("🎯 **Sugerencia:** Total de Goles: Más de 1.5 O Doble Oportunidad Local.\n\n*Sustento:* Condiciones estándar. Con planteles estables, se juega bajo inercia normal.")
