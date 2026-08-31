@@ -9,7 +9,7 @@ import streamlit as st
 st.set_page_config(page_title="Sistema de Apuestas 2.0", page_icon="🤖", layout="centered")
 
 st.title("🤖 Sistema de Apuestas 2.0")
-st.subtitle("Filtro Avanzado: Geografía + Tabla + Radar Financiero")
+st.markdown("### Filtro Avanzado: Geografía + Tabla + Radar Financiero")
 st.markdown("---")
 
 # =====================================================================
