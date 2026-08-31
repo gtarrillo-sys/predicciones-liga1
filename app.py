@@ -202,7 +202,7 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
                 goles_prediccion = "Más de 1.5 Goles totales (Línea segura)"
                 sustento_goles = "Dinámica estándar de torneo donde la necesidad obliga a mover las áreas."
 
-            # --- 2. CÁLCULO DE RESULTADO ---
+          # --- 2. CÁLCULO DE RESULTADO ---
             if es_clima_extremo:
                 if p_visita <= 4 or p_visita >= 16:
                     if r_visita >= 4:
@@ -219,7 +219,16 @@ if DATA_GEOGRAFICA and TABLA_ACUMULADA:
                 else:
                     sug_resultado = "Doble Oportunidad: Ganador Local o Empate"
 
-            # --- 3. MOSTRAR CUADRO FINAL EN PANTALLA ---
+            # --- 3. DETECTOR DE FIJAS (RADAR DE FUEGO) ---
+            es_la_fija = False
+            # Condición de Oro: Local en racha letal (>=4), visita en la lona (<=1) y clima extremo a favor
+            if r_local >= 4 and r_visita <= 1 and es_clima_extremo:
+                es_la_fija = True
+
+            # --- 4. MOSTRAR CUADRO FINAL EN PANTALLA ---
+            if es_la_fija:
+                st.warning(f"🔥 ¡LA FIJA DE LA FECHA DETECTADA! 🔥\n\nEste partido cumple con el patrón de Oro del algoritmo: El local domina las variables y la visita llega en crisis total.")
+            
             texto_final = f"🎯 **Pronóstico de Resultado:** {sug_resultado}\n\n⚽ **Predicción de Goles:** {goles_prediccion}\n\n*Sustento:* {sustento_goles} {local} jugando en clima tipo ({geo_local['tipo']}) buscará imponer condiciones ante {visita}."
             st.info(texto_final)
 else:
