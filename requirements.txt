@@ -1,6 +1,5 @@
-requests
-beautifulsoup4
-lxml
 streamlit
 pandas
+numpy
 openpyxl
+scikit-learn
