@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 # =========================================================
-# 1. CONFIGURACIÓN Y CARGA DE HOJAS DEL EXCEL
+# 1. CONFIGURACIÓN Y LECTURA
 # =========================================================
 st.set_page_config(
     page_title="Predicciones Liga 1 - Modelo Híbrido Integral",
@@ -35,204 +35,103 @@ def cargar_datos():
     try:
         xls = pd.ExcelFile("liga1_data.xlsx")
 
-        # Cargar hojas principales
         df_partidos = (
-            pd.read_excel(
-                xls,
-                "Partidos_Fecha"
-                if "Partidos_Fecha" in xls.sheet_names
-                else xls.sheet_names[0],
-            )
-            if xls
-            else pd.DataFrame()
+            pd.read_excel(xls, "Partidos_Fecha")
+            if "Partidos_Fecha" in xls.sheet_names
+            else pd.read_excel(xls, xls.sheet_names[0])
         )
 
         df_acumulada = (
             pd.read_excel(xls, "Tabla_Posiciones_Acumulado")
             if "Tabla_Posiciones_Acumulado" in xls.sheet_names
-            else (
-                pd.read_excel(xls, "Tabla_Acumulada")
-                if "Tabla_Acumulada" in xls.sheet_names
-                else pd.DataFrame()
-            )
+            else pd.read_excel(xls, "Tabla_Acumulada")
         )
 
-        df_clausura = (
-            pd.read_excel(xls, "Tabla_Posiciones_Clausura")
-            if "Tabla_Posiciones_Clausura" in xls.sheet_names
-            else pd.DataFrame()
-        )
-
-        df_resultados = (
-            pd.read_excel(xls, "Resultados_Clausura")
-            if "Resultados_Clausura" in xls.sheet_names
-            else df_partidos
-        )
+        df_clausura = pd.read_excel(xls, "Tabla_Posiciones_Clausura")
 
         # Limpieza de nombres de columnas
-        for df in [df_partidos, df_acumulada, df_clausura, df_resultados]:
-            if not df.empty:
+        for df in [df_partidos, df_acumulada, df_clausura]:
+            if df is not None and not df.empty:
                 df.columns = df.columns.astype(str).str.strip()
 
-        return df_partidos, df_acumulada, df_clausura, df_resultados
+        return df_partidos, df_acumulada, df_clausura
     except Exception:
-        return None, None, None, None
+        return None, None, None
 
 
-df_partidos, df_acumulada, df_clausura, df_resultados = cargar_datos()
+df_partidos, df_acumulada, df_clausura = cargar_datos()
 
 
 # =========================================================
-# 2. FUNCIONES DE EXTRACCIÓN Y CÁLCULO DE RACHA
+# 2. FUNCIONES DE EXTRACCIÓN LIMPIAS Y DIRECTAS
 # =========================================================
-def obtener_posicion(df_tabla, equipo_nombre):
-    """Obtiene la posición según la columna 'Rango' o la coincidencia de nombre"""
-    if df_tabla.empty:
+def obtener_posicion_excel(df_tabla, equipo_nombre):
+    """Busca coincidencia directa del club y devuelve el valor de la columna 'Rango'"""
+    if df_tabla is None or df_tabla.empty:
         return 10
 
-    busqueda = (
-        "utc" if "utc" in equipo_nombre.lower() else equipo_nombre.lower()
-    )
-
+    # Localizar columna del club
     col_club = next(
-        (
-            c
-            for c in df_tabla.columns
-            if any(k in str(c).lower() for k in ["club", "equipo"])
-        ),
-        df_tabla.columns[1] if len(df_tabla.columns) > 1 else df_tabla.columns[0],
+        (c for c in df_tabla.columns if "club" in str(c).lower()),
+        df_tabla.columns[1],
     )
 
-    coincidencias = df_tabla[
-        df_tabla[col_club]
-        .astype(str)
-        .str.lower()
-        .str.contains(busqueda, na=False)
+    coincidencia = df_tabla[
+        df_tabla[col_club].astype(str).str.strip().str.lower()
+        == str(equipo_nombre).strip().lower()
     ]
 
-    if not coincidencias.empty:
-        # Priorizar columna 'Rango' o 'Pos'
-        for c in ["Rango", "Pos", "Puesto", "N°"]:
-            if c in df_tabla.columns:
-                try:
-                    return int(coincidencias.iloc[0][c])
-                except Exception:
-                    pass
-        return coincidencias.index[0] + 1
+    if not coincidencia.empty:
+        if "Rango" in df_tabla.columns:
+            return int(coincidencia.iloc[0]["Rango"])
+        return coincidencia.index[0] + 1
 
     return 10
 
 
-def calcular_racha_desde_resultados(df_res, equipo_nombre, jornada_limite=8):
-    """Calcula los puntos de los últimos 5 partidos jugados desde la hoja Resultados_Clausura"""
-    if df_res.empty:
+def obtener_puntos_racha_excel(df_clausura, equipo_nombre):
+    """Lee las 5 celdas horizontales a partir de la columna 'Últimos 5 partidos'"""
+    if df_clausura is None or df_clausura.empty:
         return 7
 
-    busqueda = (
-        "utc" if "utc" in equipo_nombre.lower() else equipo_nombre.lower()
+    col_club = next(
+        (c for c in df_clausura.columns if "club" in str(c).lower()),
+        df_clausura.columns[1],
     )
 
-    # Identificar columnas de Local, Visita y Goles/Resultados
-    col_loc = next(
-        (c for c in df_res.columns if "local" in str(c).lower()), None
-    )
-    col_vis = next(
-        (c for c in df_res.columns if "visita" in str(c).lower()), None
-    )
-    col_jor = next(
-        (
-            c
-            for c in df_res.columns
-            if any(k in str(c).lower() for k in ["jornada", "fecha"])
-        ),
-        None,
-    )
+    coincidencia = df_clausura[
+        df_clausura[col_club].astype(str).str.strip().str.lower()
+        == str(equipo_nombre).strip().lower()
+    ]
 
-    if not col_loc or not col_vis:
+    if coincidencia.empty:
         return 7
 
-    # Filtrar partidos jugados por el equipo antes o durante la jornada límite
-    df_equipo = df_res[
-        (df_res[col_loc].astype(str).str.lower().str.contains(busqueda, na=False))
-        | (
-            df_res[col_vis]
-            .astype(str)
-            .str.lower()
-            .str.contains(busqueda, na=False)
-        )
-    ].copy()
+    fila = coincidencia.iloc[0]
+    cols_list = list(df_clausura.columns)
 
-    if col_jor and col_jor in df_equipo.columns:
-        # Convertir jornada a número si es posible
-        df_equipo["Jornada_Num"] = (
-            df_equipo[col_jor]
-            .astype(str)
-            .str.extract(r"(\d+)")
-            .astype(float)
-            .fillna(0)
-        )
-        df_equipo = df_equipo[df_equipo["Jornada_Num"] < jornada_limite]
-        df_equipo = df_equipo.sort_values(by="Jornada_Num", ascending=False)
-
-    # Tomar los últimos 5 partidos jugados
-    ultimos_5 = df_equipo.head(5)
-    puntos = 0
-
-    col_g_loc = next(
+    # Buscar la columna donde inicia la racha
+    idx_racha = next(
         (
-            c
-            for c in df_res.columns
-            if "goles_local" in str(c).lower() or "goles local" in str(c).lower()
-        ),
-        None,
-    )
-    col_g_vis = next(
-        (
-            c
-            for c in df_res.columns
-            if "goles_visita" in str(c).lower() or "goles visita" in str(c).lower()
+            i
+            for i, c in enumerate(cols_list)
+            if "últim" in str(c).lower() or "ultim" in str(c).lower()
         ),
         None,
     )
 
-    for _, row in ultimos_5.iterrows():
-        es_local = (
-            busqueda in str(row[col_loc]).lower()
-        )
-
-        # Si están los goles explícitos
-        if col_g_loc and col_g_vis and pd.notnull(row[col_g_loc]):
-            try:
-                gl = int(row[col_g_loc])
-                gv = int(row[col_g_vis])
-
-                if gl == gv:
-                    puntos += 1
-                elif es_local and gl > gv:
-                    puntos += 3
-                elif not es_local and gv > gl:
-                    puntos += 3
-                continue
-            except Exception:
-                pass
-
-        # Si hay una columna de Resultado (G, E, P / V, E, D)
-        col_res = next(
-            (
-                c
-                for c in df_res.columns
-                if "resultado" in str(c).lower() or "res" in str(c).lower()
-            ),
-            None,
-        )
-        if col_res:
-            val = str(row[col_res]).strip().lower()
-            if "gan" in val or "v" in val:
+    if idx_racha is not None:
+        puntos = 0
+        cols_5 = cols_list[idx_racha : idx_racha + 5]
+        for col in cols_5:
+            val = str(fila[col]).strip().lower()
+            if "gan" in val:
                 puntos += 3
-            elif "emp" in val or "e" in val:
+            elif "emp" in val:
                 puntos += 1
+        return puntos
 
-    return puntos if len(ultimos_5) > 0 else 7
+    return 7
 
 
 # =========================================================
@@ -280,7 +179,6 @@ def modelo_regresion_logistica(features):
 
     factor_racha = (racha_l - racha_v) / 15.0
 
-    # Posición Ponderada: 60% Acumulado + 40% Clausura
     pos_efectiva_l = (0.60 * pos_ac_l) + (0.40 * pos_cl_l)
     pos_efectiva_v = (0.60 * pos_ac_v) + (0.40 * pos_cl_v)
 
@@ -312,7 +210,7 @@ def modelo_regresion_logistica(features):
 
 
 # =========================================================
-# 4. INTERFAZ streamlit
+# 4. INTERFAZ Y DESPLIEGUE
 # =========================================================
 st.title("⚽ Predicciones Liga 1 - Análisis Multicapa Integral")
 
@@ -321,14 +219,6 @@ if df_partidos is not None and not df_partidos.empty:
         st.header("🗓️ Selección de Partido")
         jornadas = df_partidos["Jornada"].dropna().unique()
         jornada_sel = st.selectbox("Seleccionar Jornada", jornadas)
-
-        # Extraer número numérico de jornada
-        try:
-            num_jornada = int(
-                "".join(filter(str.isdigit, str(jornada_sel)))
-            )
-        except Exception:
-            num_jornada = 8
 
         df_jornada = df_partidos[
             df_partidos["Jornada"] == jornada_sel
@@ -343,28 +233,23 @@ if df_partidos is not None and not df_partidos.empty:
         )
 
         fila = df_jornada[df_jornada["Duelo"] == partido_sel].iloc[0]
-        local = str(fila.get("Local", "Local"))
-        visita = str(fila.get("Visita", "Visita"))
+        local = str(fila.get("Local", "Local")).strip()
+        visita = str(fila.get("Visita", "Visita")).strip()
         hora = str(fila.get("Hora", "15:15"))
         plaza = str(fila.get("Ciudad", "Sullana"))
         estadio = str(
             fila.get("Estadio", "Estadio Campeones del 36")
         )
 
-        # Lectura de Posiciones
-        pos_ac_l_auto = obtener_posicion(df_acumulada, local)
-        pos_ac_v_auto = obtener_posicion(df_acumulada, visita)
+        # Cargar datos automáticos desde Excel con nombres estandarizados
+        pos_ac_l_auto = obtener_posicion_excel(df_acumulada, local)
+        pos_ac_v_auto = obtener_posicion_excel(df_acumulada, visita)
 
-        pos_cl_l_auto = obtener_posicion(df_clausura, local)
-        pos_cl_v_auto = obtener_posicion(df_clausura, visita)
+        pos_cl_l_auto = obtener_posicion_excel(df_clausura, local)
+        pos_cl_v_auto = obtener_posicion_excel(df_clausura, visita)
 
-        # Cálculo de Racha desde Resultados_Clausura
-        pts_racha_l_auto = calcular_racha_desde_resultados(
-            df_resultados, local, num_jornada
-        )
-        pts_racha_v_auto = calcular_racha_desde_resultados(
-            df_resultados, visita, num_jornada
-        )
+        pts_racha_l_auto = obtener_puntos_racha_excel(df_clausura, local)
+        pts_racha_v_auto = obtener_puntos_racha_excel(df_clausura, visita)
 
         st.markdown("---")
         st.header("🏆 Posiciones en Tablas")
@@ -426,7 +311,7 @@ if df_partidos is not None and not df_partidos.empty:
             value=True if "UTC" in visita else False,
         )
 
-    # Detección Climática y de Terreno
+    # Conversión y Ajustes Ambientales
     try:
         h_dec = int(str(hora).split(":")[0]) + int(str(hora).split(":")[1]) / 60.0
     except Exception:
@@ -468,7 +353,6 @@ if df_partidos is not None and not df_partidos.empty:
     prob_1x_final = ((p_loc_poi + p_emp_poi) + p_1x2_log) / 2.0
     prob_bts_final = (p_bts_poi + p_bts_log) / 2.0
 
-    # Despliegue en Pantalla
     st.subheader(f"📊 INFORME DETALLADO: {local} vs {visita}")
     st.markdown(
         f"📍 **Plaza:** {plaza} | ⏰ **Hora:** {hora} hrs | 🏟️ **Estadio:** {estadio} ({tipo_cancha})"
@@ -490,7 +374,7 @@ if df_partidos is not None and not df_partidos.empty:
             f"* **Posición Clausura (40%):** {local} ({pos_cl_l}°) vs {visita} ({pos_cl_v}°)"
         )
         st.write(
-            f"* **Racha Reciente (Calculada):** {local} ({pts_racha_l} pts) vs {visita} ({pts_racha_v} pts)"
+            f"* **Racha Reciente:** {local} ({pts_racha_l} pts) vs {visita} ({pts_racha_v} pts)"
         )
         st.write(
             f"* **Nivel de Urgencia:** Local {urgencia_l}/5 | Visita {urgencia_v}/5"
@@ -542,4 +426,5 @@ if df_partidos is not None and not df_partidos.empty:
     st.info(f"⚽ **Sugerencia de Goles:** {rec_goles}")
 
 else:
+    st.error("No se pudo cargar la información desde `liga1_data.xlsx`.")
     st.error("No se pudo cargar la información desde `liga1_data.xlsx`.")
