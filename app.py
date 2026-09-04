@@ -7,7 +7,7 @@ import streamlit as st
 # 1. CONFIGURACIÓN Y LECTURA
 # =========================================================
 st.set_page_config(
-    page_title="Predicciones Liga 1 - Modelo Completo",
+    page_title="Predicciones Liga 1 - Modelo Híbrido Integral",
     page_icon="⚽",
     layout="wide",
 )
@@ -34,6 +34,8 @@ PLAZAS_SINTETICAS = [
 def cargar_datos():
     try:
         xls = pd.ExcelFile("liga1_data.xlsx")
+
+        # Cargar hojas
         df_partidos = pd.read_excel(
             xls,
             "Partidos_Fecha"
@@ -45,63 +47,101 @@ def cargar_datos():
             if "Data_Geografica" in xls.sheet_names
             else pd.DataFrame()
         )
-        df_tabla = (
+
+        df_acumulada = (
+            pd.read_excel(xls, "Tabla_Acumulada")
+            if "Tabla_Acumulada" in xls.sheet_names
+            else pd.DataFrame()
+        )
+        df_clausura = (
             pd.read_excel(xls, "Tabla_Posiciones_Clausura")
             if "Tabla_Posiciones_Clausura" in xls.sheet_names
             else pd.DataFrame()
         )
 
-        df_partidos.columns = df_partidos.columns.astype(str).str.strip()
-        if not df_geo.empty:
-            df_geo.columns = df_geo.columns.astype(str).str.strip()
-        if not df_tabla.empty:
-            df_tabla.columns = df_tabla.columns.astype(str).str.strip()
+        # Limpieza de encabezados
+        for df in [df_partidos, df_geo, df_acumulada, df_clausura]:
+            if not df.empty:
+                df.columns = df.columns.astype(str).str.strip()
 
-        return df_partidos, df_geo, df_tabla
+        return df_partidos, df_geo, df_acumulada, df_clausura
     except Exception:
-        return None, None, None
+        return None, None, None, None
 
 
-df_partidos, df_geo, df_tabla = cargar_datos()
+df_partidos, df_geo, df_acumulada, df_clausura = cargar_datos()
 
 
 # =========================================================
-# 2. FUNCIONES DE EXTRACCIÓN Y CÁLCULO
+# 2. FUNCIONES DE EXTRACCIÓN
 # =========================================================
-def obtener_datos_tabla(df_tabla, equipo_nombre):
-    """Devuelve (posicion, puntos_racha) desde la tabla"""
-    if df_tabla.empty or "Club" not in df_tabla.columns:
-        return 9, 8
+def obtener_posicion_real(df_tabla, equipo_nombre):
+    """Devuelve la posición según el orden físico de filas en la tabla"""
+    if df_tabla.empty:
+        return 10
 
-    fila = df_tabla[
-        df_tabla["Club"].astype(str).str.contains(equipo_nombre, case=False)
+    col_club = None
+    for c in df_tabla.columns:
+        if any(k in str(c).lower() for k in ["club", "equipo", "nombre"]):
+            col_club = c
+            break
+    if not col_club:
+        col_club = df_tabla.columns[0]
+
+    coincidencias = df_tabla[
+        df_tabla[col_club]
+        .astype(str)
+        .str.contains(equipo_nombre, case=False, na=False)
     ]
-    if fila.empty:
-        return 10, 7
+    if coincidencias.empty:
+        return 10
 
-    # Posición en tabla
-    pos = 10
-    if "Rango" in fila.columns:
-        pos = int(fila.iloc[0]["Rango"])
+    return coincidencias.index[0] + 1
 
-    # Puntos Racha (Últimos 5)
-    puntos_r = 0
+
+def obtener_puntos_racha(df_clausura, equipo_nombre):
+    """Calcula los puntos de los últimos 5 partidos desde el Clausura"""
+    if df_clausura.empty:
+        return 7
+
+    col_club = None
+    for c in df_clausura.columns:
+        if any(k in str(c).lower() for k in ["club", "equipo", "nombre"]):
+            col_club = c
+            break
+    if not col_club:
+        col_club = df_clausura.columns[0]
+
+    coincidencias = df_clausura[
+        df_clausura[col_club]
+        .astype(str)
+        .str.contains(equipo_nombre, case=False, na=False)
+    ]
+    if coincidencias.empty:
+        return 7
+
+    fila = coincidencias.iloc[0]
+    puntos_racha = 0
+
     cols_racha = [
         c
-        for c in fila.columns
-        if "ultim" in c.lower() or "unnamed" in c.lower()
+        for c in df_clausura.columns
+        if any(
+            k in str(c).lower()
+            for k in ["ultim", "unnamed", "racha", "form", "5"]
+        )
     ]
+
     if cols_racha:
         for c in cols_racha[:5]:
-            val = str(fila.iloc[0][c]).strip().lower()
-            if "gan" in val or "v" in val:
-                puntos_r += 3
-            elif "emp" in val or "e" in val:
-                puntos_r += 1
-    else:
-        puntos_r = 9
+            val = str(fila[c]).strip().lower()
+            if any(k in val for k in ["v", "g", "gan", "check", "true", "1"]):
+                puntos_racha += 3
+            elif any(k in val for k in ["e", "emp", "minus", "dash"]):
+                puntos_racha += 1
+        return puntos_racha
 
-    return pos, puntos_r
+    return 7
 
 
 # =========================================================
@@ -141,16 +181,21 @@ def modelo_regresion_logistica(features):
         urg_v,
         racha_l,
         racha_v,
-        pos_l,
-        pos_v,
+        pos_ac_l,
+        pos_ac_v,
+        pos_cl_l,
+        pos_cl_v,
     ) = features
 
-    # Factor racha: Puntos en ultimos 5 / 15
+    # Factor racha: Diferencial de puntos en últimos 5 partidos / 15
     factor_racha = (racha_l - racha_v) / 15.0
 
-    # Factor Posición (1 a 18): Cuanto menor sea el puesto (cerca al 1°), mayor fuerza
-    f_pos_l = (18 - pos_l + 1) / 18.0
-    f_pos_v = (18 - pos_v + 1) / 18.0
+    # Posición Ponderada: 60% Acumulado + 40% Clausura
+    pos_efectiva_l = (0.60 * pos_ac_l) + (0.40 * pos_cl_l)
+    pos_efectiva_v = (0.60 * pos_ac_v) + (0.40 * pos_cl_v)
+
+    f_pos_l = (18 - pos_efectiva_l + 1) / 18.0
+    f_pos_v = (18 - pos_efectiva_v + 1) / 18.0
     dif_posicion = f_pos_l - f_pos_v
 
     z_1x2 = (
@@ -162,7 +207,7 @@ def modelo_regresion_logistica(features):
         + (0.35 * sintetica)
         + (0.15 * (urg_l - urg_v))
         + (0.50 * factor_racha)
-        + (0.45 * dif_posicion)  # PESO DE POSICIÓN EN TABLA INCORPORADO
+        + (0.45 * dif_posicion)
     )
 
     z_bts = (
@@ -208,28 +253,47 @@ if df_partidos is not None:
             fila.get("Estadio", "Estadio Campeones del 36")
         )
 
-        # Cargar tabla
-        pos_l_auto, racha_l_auto = obtener_datos_tabla(df_tabla, local)
-        pos_v_auto, racha_v_auto = obtener_datos_tabla(df_tabla, visita)
+        # Cargar posiciones reales
+        pos_ac_l_auto = obtener_posicion_real(df_acumulada, local)
+        pos_ac_v_auto = obtener_posicion_real(df_acumulada, visita)
+
+        pos_cl_l_auto = obtener_posicion_real(df_clausura, local)
+        pos_cl_v_auto = obtener_posicion_real(df_clausura, visita)
+
+        pts_racha_l_auto = obtener_puntos_racha(df_clausura, local)
+        pts_racha_v_auto = obtener_puntos_racha(df_clausura, visita)
 
         st.markdown("---")
-        st.header("📊 Tabla de Posiciones y Racha")
-        pos_l = st.number_input(
-            f"Posición Tabla - {local}", 1, 18, int(pos_l_auto)
-        )
-        pos_v = st.number_input(
-            f"Posición Tabla - {visita}", 1, 18, int(pos_v_auto)
-        )
+        st.header("🏆 Posiciones en Tablas")
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            st.caption("Tabla Acumulada")
+            pos_ac_l = st.number_input(
+                f"Acum. {local}", 1, 18, int(pos_ac_l_auto)
+            )
+            pos_ac_v = st.number_input(
+                f"Acum. {visita}", 1, 18, int(pos_ac_v_auto)
+            )
+        with col_t2:
+            st.caption("Tabla Clausura")
+            pos_cl_l = st.number_input(
+                f"Claus. {local}", 1, 18, int(pos_cl_l_auto)
+            )
+            pos_cl_v = st.number_input(
+                f"Claus. {visita}", 1, 18, int(pos_cl_v_auto)
+            )
 
+        st.markdown("---")
+        st.header("🔥 Racha de los Últimos 5 Partidos")
         pts_racha_l = st.slider(
-            f"Pts Últimos 5 - {local}", 0, 15, int(racha_l_auto)
+            f"Pts Últimos 5 - {local}", 0, 15, int(pts_racha_l_auto)
         )
         pts_racha_v = st.slider(
-            f"Pts Últimos 5 - {visita}", 0, 15, int(racha_v_auto)
+            f"Pts Últimos 5 - {visita}", 0, 15, int(pts_racha_v_auto)
         )
 
         st.markdown("---")
-        st.header("⚙️ Promedio de Goles (λ)")
+        st.header("⚙️ Promedios de Goles (λ)")
         lambda_l = st.number_input(
             f"Prom. Goles Local ({local})", 0.5, 4.0, 2.33, 0.05
         )
@@ -238,7 +302,7 @@ if df_partidos is not None:
         )
 
         st.markdown("---")
-        st.header("⚙️ Entorno y Forma")
+        st.header("⚙️ Entorno")
         es_sintetica_auto = any(
             p.lower() in plaza.lower() for p in PLAZAS_SINTETICAS
         )
@@ -291,8 +355,10 @@ if df_partidos is not None:
         urgencia_v,
         pts_racha_l,
         pts_racha_v,
-        pos_l,
-        pos_v,
+        pos_ac_l,
+        pos_ac_v,
+        pos_cl_l,
+        pos_cl_v,
     ]
     p_1x2_log, p_bts_log = modelo_regresion_logistica(features)
 
@@ -313,7 +379,12 @@ if df_partidos is not None:
 
     with col_c1:
         st.markdown("### 🏆 Capa 1: Posición y Momentum")
-        st.write(f"* **Posición en Tabla:** {local} ({pos_l}°) vs {visita} ({pos_v}°)")
+        st.write(
+            f"* **Posición Acumulada (60%):** {local} ({pos_ac_l}°) vs {visita} ({pos_ac_v}°)"
+        )
+        st.write(
+            f"* **Posición Clausura (40%):** {local} ({pos_cl_l}°) vs {visita} ({pos_cl_v}°)"
+        )
         st.write(
             f"* **Racha Reciente:** {local} ({pts_racha_l} pts) vs {visita} ({pts_racha_v} pts)"
         )
@@ -333,7 +404,7 @@ if df_partidos is not None:
         st.markdown("### 🧮 Capa 3: Métricas Híbridas Integradas")
         st.write(f"* **Poisson (1X):** {((p_loc_poi + p_emp_poi)*100):.1f}%")
         st.write(
-            f"* **Regresión Logística (1X Ajustado):** {(p_1x2_log*100):.1f}%"
+            f"* **Regresión Logística (1X Ponderado):** {(p_1x2_log*100):.1f}%"
         )
         st.write(f"* **Poisson (Ambos Anotan):** {(p_bts_poi*100):.1f}%")
         st.write(
@@ -345,7 +416,7 @@ if df_partidos is not None:
 
     if prob_1x_final >= 0.60:
         if prob_1x_final >= 0.72:
-            rec_resultado = f"**Gana {local} Seco** (Dominio de posición, racha y localía)."
+            rec_resultado = f"**Gana {local} Seco** (Dominio de posición ponderada, racha reciente y localía)."
         else:
             rec_resultado = f"**Doble Oportunidad: {local} o Empate (1X)** (Excelente respaldo estadístico)."
 
