@@ -5,10 +5,10 @@ import pandas as pd
 import streamlit as st
 
 # =========================================================
-# 1. CONFIGURACIÓN Y LECTURA AUTOMÁTICA DEL EXCEL
+# 1. CONFIGURACIÓN Y LECTURA TOLERANTE DEL EXCEL
 # =========================================================
 st.set_page_config(
-    page_title="Predicciones Liga 1 - Vinculado a Excel",
+    page_title="Predicciones Liga 1 - Motor Vinculado a Excel",
     page_icon="⚽",
     layout="wide",
 )
@@ -25,25 +25,33 @@ PLAZAS_SINTETICAS = [
 
 @st.cache_data
 def cargar_datos_excel():
-    """
-    Lee el archivo liga1_data.xlsx desde el mismo repositorio de GitHub.
-    """
+    """Lee el archivo liga1_data.xlsx desde el repositorio."""
     try:
-        # Carga la hoja de partidos programados
-        df_partidos = pd.read_excel("liga1_data.xlsx", sheet_name="Fecha8")
-        return df_partidos
+        df = pd.read_excel("liga1_data.xlsx", sheet_name="Fecha8")
     except Exception:
-        # Si no se especifica hoja, lee la primera hoja por defecto
-        df_partidos = pd.read_excel("liga1_data.xlsx")
-        return df_partidos
+        df = pd.read_excel("liga1_data.xlsx")
+
+    # Limpiar espacios en blanco de los nombres de columnas
+    df.columns = df.columns.astype(str).str.strip()
+    return df
 
 
-# Intentar vincular el archivo Excel
 try:
     df_fecha8 = cargar_datos_excel()
     excel_conectado = True
 except Exception as e:
     excel_conectado = False
+
+
+def obtener_columna(df, posibles_nombres, valor_defecto=None):
+    """Busca una columna entre varias opciones posibles para evitar KeyError."""
+    for nombre in posibles_nombres:
+        for col in df.columns:
+            if col.lower() == nombre.lower():
+                return df[col]
+    if valor_defecto is not None:
+        return pd.Series([valor_defecto] * len(df))
+    return None
 
 
 # =========================================================
@@ -120,58 +128,147 @@ st.title("⚽ Predicciones Liga 1 - Motor Vinculado a Excel")
 if excel_conectado:
     st.success("🟢 **Base de datos `liga1_data.xlsx` conectada con éxito.**")
 
-    # Crear lista desplegable dinámica desde las columnas del Excel
-    df_fecha8["Partido"] = (
-        df_fecha8["Local"].astype(str) + " vs " + df_fecha8["Visita"].astype(str)
+    # Mapeo flexible de columnas
+    col_local = obtener_columna(
+        df_fecha8, ["Local", "Equipo Local", "Equipo_Local", "Home"]
     )
+    col_visita = obtener_columna(
+        df_fecha8,
+        ["Visita", "Visitante", "Equipo Visita", "Equipo_Visitante", "Away"],
+    )
+
+    if col_local is not None and col_visita is not None:
+        df_fecha8["Partido"] = (
+            col_local.astype(str) + " vs " + col_visita.astype(str)
+        )
+    else:
+        df_fecha8["Partido"] = [
+            f"Partido {i+1}" for i in range(len(df_fecha8))
+        ]
 
     with st.sidebar:
         st.header("🗓️ Selección desde Excel")
-        partido_sel = st.selectbox("Elegir Duelo", df_fecha8["Partido"].unique())
+        partido_sel = st.selectbox(
+            "Elegir Duelo", df_fecha8["Partido"].unique()
+        )
 
-        # Extraer la fila correspondiente al partido seleccionado
-        fila = df_fecha8[df_fecha8["Partido"] == partido_sel].iloc[0]
+        # Fila del partido seleccionado
+        idx = df_fecha8[df_fecha8["Partido"] == partido_sel].index[0]
+        row = df_fecha8.iloc[idx]
 
         st.markdown("---")
         st.header("⚙️ Parámetros Extraídos")
-        local = st.text_input("Local", str(fila.get("Local", "Local")))
-        visita = st.text_input("Visita", str(fila.get("Visita", "Visita")))
-        hora = st.text_input("Hora (HH:MM)", str(fila.get("Hora", "15:00")))
-        plaza = st.text_input("Ciudad / Plaza", str(fila.get("Plaza", "Lima")))
+
+        val_local = str(
+            row.get(
+                "Local",
+                row.get(
+                    "Equipo Local", row.get("Equipo_Local", "Equipo Local")
+                ),
+            )
+        )
+        val_visita = str(
+            row.get(
+                "Visita",
+                row.get(
+                    "Visitante",
+                    row.get(
+                        "Equipo Visita",
+                        row.get("Equipo_Visitante", "Equipo Visitante"),
+                    ),
+                ),
+            )
+        )
+
+        local = st.text_input("Local", val_local)
+        visita = st.text_input("Visita", val_visita)
+        hora = st.text_input(
+            "Hora (HH:MM)",
+            str(row.get("Hora", row.get("HORA", row.get("Time", "15:00")))),
+        )
+        plaza = st.text_input(
+            "Ciudad / Plaza",
+            str(
+                row.get(
+                    "Plaza", row.get("Ciudad", row.get("PLAZA", "Lima"))
+                )
+            ),
+        )
+
+        val_cancha = str(
+            row.get("Cancha", row.get("Gramado", row.get("CANCHA", "Natural")))
+        )
         tipo_cancha = st.selectbox(
             "Gramado",
             ["Natural", "Sintético"],
-            index=1 if str(fila.get("Cancha", "")) == "Sintético" else 0,
+            index=1 if "sint" in val_cancha.lower() else 0,
         )
 
         lambda_l = st.number_input(
             "Prom. Goles Local (λ)",
             0.5,
             4.0,
-            float(fila.get("Lambda_Local", 1.5)),
+            float(
+                row.get(
+                    "Lambda_Local",
+                    row.get(
+                        "Prom_Goles_Local", row.get("Lambda Local", 1.5)
+                    ),
+                )
+            ),
             0.1,
         )
         lambda_v = st.number_input(
             "Prom. Goles Visita (λ)",
             0.5,
             4.0,
-            float(fila.get("Lambda_Visita", 1.0)),
+            float(
+                row.get(
+                    "Lambda_Visita",
+                    row.get(
+                        "Prom_Goles_Visita", row.get("Lambda Visita", 1.0)
+                    ),
+                )
+            ),
             0.1,
         )
 
         urgencia_l = st.slider(
-            "Urgencia Local", 1, 5, int(fila.get("Urgencia_Local", 3))
+            "Urgencia Local",
+            1,
+            5,
+            int(
+                row.get(
+                    "Urgencia_Local", row.get("Urgencia Local", 3)
+                )
+            ),
         )
         urgencia_v = st.slider(
-            "Urgencia Visita", 1, 5, int(fila.get("Urgencia_Visita", 3))
+            "Urgencia Visita",
+            1,
+            5,
+            int(
+                row.get(
+                    "Urgencia_Visita", row.get("Urgencia Visita", 3)
+                )
+            ),
         )
 
         vino_de_golear = st.checkbox(
-            "Local viene de golear", value=bool(fila.get("Goleada_Previa", 0))
+            "Local viene de golear",
+            value=bool(
+                row.get(
+                    "Goleada_Previa", row.get("Goleada Previa", 0)
+                )
+            ),
         )
         desgaste_logistico = st.checkbox(
             "Alerta de viaje en la Visita",
-            value=bool(fila.get("Desgaste_Viaje", 0)),
+            value=bool(
+                row.get(
+                    "Desgaste_Viaje", row.get("Desgaste Viaje", 0)
+                )
+            ),
         )
 
     # =========================================================
