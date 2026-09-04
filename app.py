@@ -7,7 +7,7 @@ import streamlit as st
 # 1. CONFIGURACIÓN Y LECTURA
 # =========================================================
 st.set_page_config(
-    page_title="Predicciones Liga 1 - Calibración Precisa",
+    page_title="Predicciones Liga 1 - Modelo Completo",
     page_icon="⚽",
     layout="wide",
 )
@@ -51,30 +51,61 @@ def cargar_datos():
             else pd.DataFrame()
         )
 
-        df_res = (
-            pd.read_excel(xls, "Resultados_Clausura")
-            if "Resultados_Clausura" in xls.sheet_names
-            else pd.DataFrame()
-        )
-
         df_partidos.columns = df_partidos.columns.astype(str).str.strip()
         if not df_geo.empty:
             df_geo.columns = df_geo.columns.astype(str).str.strip()
         if not df_tabla.empty:
             df_tabla.columns = df_tabla.columns.astype(str).str.strip()
-        if not df_res.empty:
-            df_res.columns = df_res.columns.astype(str).str.strip()
 
-        return df_partidos, df_geo, df_tabla, df_res
+        return df_partidos, df_geo, df_tabla
     except Exception:
-        return None, None, None, None
+        return None, None, None
 
 
-df_partidos, df_geo, df_tabla, df_res = cargar_datos()
+df_partidos, df_geo, df_tabla = cargar_datos()
 
 
 # =========================================================
-# 2. MOTORES MATEMÁTICOS
+# 2. FUNCIONES DE EXTRACCIÓN Y CÁLCULO
+# =========================================================
+def obtener_datos_tabla(df_tabla, equipo_nombre):
+    """Devuelve (posicion, puntos_racha) desde la tabla"""
+    if df_tabla.empty or "Club" not in df_tabla.columns:
+        return 9, 8
+
+    fila = df_tabla[
+        df_tabla["Club"].astype(str).str.contains(equipo_nombre, case=False)
+    ]
+    if fila.empty:
+        return 10, 7
+
+    # Posición en tabla
+    pos = 10
+    if "Rango" in fila.columns:
+        pos = int(fila.iloc[0]["Rango"])
+
+    # Puntos Racha (Últimos 5)
+    puntos_r = 0
+    cols_racha = [
+        c
+        for c in fila.columns
+        if "ultim" in c.lower() or "unnamed" in c.lower()
+    ]
+    if cols_racha:
+        for c in cols_racha[:5]:
+            val = str(fila.iloc[0][c]).strip().lower()
+            if "gan" in val or "v" in val:
+                puntos_r += 3
+            elif "emp" in val or "e" in val:
+                puntos_r += 1
+    else:
+        puntos_r = 9
+
+    return pos, puntos_r
+
+
+# =========================================================
+# 3. MOTORES MATEMÁTICOS
 # =========================================================
 def calcular_poisson(lambda_l, lambda_v, max_g=5):
     mat = np.zeros((max_g + 1, max_g + 1))
@@ -108,16 +139,30 @@ def modelo_regresion_logistica(features):
         sintetica,
         urg_l,
         urg_v,
+        racha_l,
+        racha_v,
+        pos_l,
+        pos_v,
     ) = features
 
+    # Factor racha: Puntos en ultimos 5 / 15
+    factor_racha = (racha_l - racha_v) / 15.0
+
+    # Factor Posición (1 a 18): Cuanto menor sea el puesto (cerca al 1°), mayor fuerza
+    f_pos_l = (18 - pos_l + 1) / 18.0
+    f_pos_v = (18 - pos_v + 1) / 18.0
+    dif_posicion = f_pos_l - f_pos_v
+
     z_1x2 = (
-        0.20
-        + (0.35 * (lambda_l - lambda_v))
+        0.15
+        + (0.30 * (lambda_l - lambda_v))
         - (0.25 * clima_3pm)
-        - (0.30 * goleada)
-        + (0.45 * desgaste)
-        + (0.40 * sintetica)
+        - (0.25 * goleada)
+        + (0.40 * desgaste)
+        + (0.35 * sintetica)
         + (0.15 * (urg_l - urg_v))
+        + (0.50 * factor_racha)
+        + (0.45 * dif_posicion)  # PESO DE POSICIÓN EN TABLA INCORPORADO
     )
 
     z_bts = (
@@ -132,9 +177,9 @@ def modelo_regresion_logistica(features):
 
 
 # =========================================================
-# 3. INTERFAZ STREAMLIT
+# 4. INTERFAZ Y DESPLIEGUE
 # =========================================================
-st.title("⚽ Predicciones Liga 1 - Análisis Integral")
+st.title("⚽ Predicciones Liga 1 - Análisis Multicapa Integral")
 
 if df_partidos is not None:
     with st.sidebar:
@@ -163,29 +208,33 @@ if df_partidos is not None:
             fila.get("Estadio", "Estadio Campeones del 36")
         )
 
-        # Ajuste por defecto específico para Alianza Atlético (2.33 si es local)
-        def_lambda_l = (
-            2.33
-            if "Alianza" in local
-            else 1.80
-        )
-        def_lambda_v = 0.67 if "UTC" in visita else 0.90
+        # Cargar tabla
+        pos_l_auto, racha_l_auto = obtener_datos_tabla(df_tabla, local)
+        pos_v_auto, racha_v_auto = obtener_datos_tabla(df_tabla, visita)
 
         st.markdown("---")
-        st.header("⚙️ Variables de Promedio de Gol (λ)")
+        st.header("📊 Tabla de Posiciones y Racha")
+        pos_l = st.number_input(
+            f"Posición Tabla - {local}", 1, 18, int(pos_l_auto)
+        )
+        pos_v = st.number_input(
+            f"Posición Tabla - {visita}", 1, 18, int(pos_v_auto)
+        )
+
+        pts_racha_l = st.slider(
+            f"Pts Últimos 5 - {local}", 0, 15, int(racha_l_auto)
+        )
+        pts_racha_v = st.slider(
+            f"Pts Últimos 5 - {visita}", 0, 15, int(racha_v_auto)
+        )
+
+        st.markdown("---")
+        st.header("⚙️ Promedio de Goles (λ)")
         lambda_l = st.number_input(
-            f"Prom. Goles Local ({local})",
-            0.5,
-            4.0,
-            float(def_lambda_l),
-            0.05,
+            f"Prom. Goles Local ({local})", 0.5, 4.0, 2.33, 0.05
         )
         lambda_v = st.number_input(
-            f"Prom. Goles Visita ({visita})",
-            0.1,
-            4.0,
-            float(def_lambda_v),
-            0.05,
+            f"Prom. Goles Visita ({visita})", 0.1, 4.0, 0.67, 0.05
         )
 
         st.markdown("---")
@@ -240,6 +289,10 @@ if df_partidos is not None:
         es_sintetica,
         urgencia_l,
         urgencia_v,
+        pts_racha_l,
+        pts_racha_v,
+        pos_l,
+        pos_v,
     ]
     p_1x2_log, p_bts_log = modelo_regresion_logistica(features)
 
@@ -259,11 +312,16 @@ if df_partidos is not None:
     col_c1, col_c2 = st.columns(2)
 
     with col_c1:
-        st.markdown("### 🛡️ Capa 1: Presión por Objetivos (Tabla)")
-        st.write(f"* **Nivel de Urgencia Local:** {urgencia_l}/5")
-        st.write(f"* **Nivel de Urgencia Visita:** {urgencia_v}/5")
+        st.markdown("### 🏆 Capa 1: Posición y Momentum")
+        st.write(f"* **Posición en Tabla:** {local} ({pos_l}°) vs {visita} ({pos_v}°)")
+        st.write(
+            f"* **Racha Reciente:** {local} ({pts_racha_l} pts) vs {visita} ({pts_racha_v} pts)"
+        )
+        st.write(
+            f"* **Nivel de Urgencia:** Local {urgencia_l}/5 | Visita {urgencia_v}/5"
+        )
 
-        st.markdown("### 📈 Capa 2: Forma, Cancha y Logística")
+        st.markdown("### 📈 Capa 2: Cancha y Logística")
         st.write(
             f"* **Racha Local:** {'Viene de golear / Racha positiva' if es_goleada else 'Forma estándar'}"
         )
@@ -272,9 +330,11 @@ if df_partidos is not None:
         )
 
     with col_c2:
-        st.markdown("### 🧮 Capa 3: Métricas Híbridas")
+        st.markdown("### 🧮 Capa 3: Métricas Híbridas Integradas")
         st.write(f"* **Poisson (1X):** {((p_loc_poi + p_emp_poi)*100):.1f}%")
-        st.write(f"* **Regresión Logística (1X):** {(p_1x2_log*100):.1f}%")
+        st.write(
+            f"* **Regresión Logística (1X Ajustado):** {(p_1x2_log*100):.1f}%"
+        )
         st.write(f"* **Poisson (Ambos Anotan):** {(p_bts_poi*100):.1f}%")
         st.write(
             f"* **Regresión Logística (Ambos Anotan):** {(p_bts_log*100):.1f}%"
@@ -285,7 +345,7 @@ if df_partidos is not None:
 
     if prob_1x_final >= 0.60:
         if prob_1x_final >= 0.72:
-            rec_resultado = f"**Gana {local} Seco** (Dominio claro de métricas)."
+            rec_resultado = f"**Gana {local} Seco** (Dominio de posición, racha y localía)."
         else:
             rec_resultado = f"**Doble Oportunidad: {local} o Empate (1X)** (Excelente respaldo estadístico)."
 
