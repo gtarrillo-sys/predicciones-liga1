@@ -8,7 +8,7 @@ import streamlit as st
 # 1. CONFIGURACIÓN Y LECTURA AUTOMÁTICA DEL FIXTURE
 # =========================================================
 st.set_page_config(
-    page_title="Predicciones Liga 1 - Fixture Integrado",
+    page_title="Predicciones Liga 1 - Sistema con Fixture Real",
     page_icon="⚽",
     layout="wide",
 )
@@ -35,7 +35,7 @@ PLAZAS_SINTETICAS = [
 def cargar_datos_excel():
     """Lee el archivo liga1_data.xlsx y limpia los encabezados."""
     try:
-        df = pd.read_excel("liga1_data.xlsx", sheet_name="Fixture")
+        df = pd.read_excel("liga1_data.xlsx", sheet_name="Fecha8")
     except Exception:
         df = pd.read_excel("liga1_data.xlsx")
 
@@ -48,6 +48,15 @@ try:
     excel_conectado = True
 except Exception:
     excel_conectado = False
+
+
+def buscar_columna(df, opciones, valor_defecto=""):
+    """Busca una columna de forma segura sin causar IndexError."""
+    for op in opciones:
+        for col in df.columns:
+            if col.lower() == op.lower():
+                return col
+    return None
 
 
 # =========================================================
@@ -122,56 +131,74 @@ st.title("⚽ Predicciones Liga 1 - Sistema con Fixture Real")
 if excel_conectado:
     st.success("🟢 **Base de datos conectada correctamente desde Excel.**")
 
-    # Mapeo de columnas del Excel
-    col_jornada = (
-        "Jornada" if "Jornada" in df_fixture.columns else df_fixture.columns[0]
+    # Mapeo ultraseguro de nombres de columna
+    c_jornada = buscar_columna(df_fixture, ["Jornada", "Fecha", "Fecha_N"])
+    c_local = buscar_columna(
+        df_fixture, ["Local", "Equipo Local", "Equipo_Local"]
     )
-    col_local = (
-        "Local" if "Local" in df_fixture.columns else df_fixture.columns[3]
+    c_visita = buscar_columna(
+        df_fixture, ["Visita", "Visitante", "Equipo Visita"]
     )
-    col_visita = (
-        "Visita" if "Visita" in df_fixture.columns else df_fixture.columns[4]
-    )
-    col_ciudad = (
-        "Ciudad" if "Ciudad" in df_fixture.columns else df_fixture.columns[6]
-    )
+    c_ciudad = buscar_columna(df_fixture, ["Ciudad", "Plaza"])
+    c_estadio = buscar_columna(df_fixture, ["Estadio", "Cancha_Nombre"])
+    c_hora = buscar_columna(df_fixture, ["Hora", "Horario"])
 
     with st.sidebar:
         st.header("🗓️ Navegación de Partidos")
 
-        # Filtro de Jornada
-        jornadas_disponibles = df_fixture[col_jornada].unique()
-        jornada_sel = st.selectbox("Seleccionar Jornada", jornadas_disponibles)
+        # Manejo condicional si existe la columna Jornada
+        if c_jornada and c_jornada in df_fixture.columns:
+            jornadas_disponibles = df_fixture[c_jornada].dropna().unique()
+            jornada_sel = st.selectbox(
+                "Seleccionar Jornada", jornadas_disponibles
+            )
+            df_jornada = df_fixture[
+                df_fixture[c_jornada] == jornada_sel
+            ].copy()
+        else:
+            jornada_sel = "Fecha General"
+            df_jornada = df_fixture.copy()
 
-        # Filtrar partidos por la jornada seleccionada
-        df_jornada = df_fixture[df_fixture[col_jornada] == jornada_sel].copy()
+        # Generar columna Duelo
+        loc_series = (
+            df_jornada[c_local]
+            if c_local
+            else pd.Series(["Local"] * len(df_jornada))
+        )
+        vis_series = (
+            df_jornada[c_visita]
+            if c_visita
+            else pd.Series(["Visita"] * len(df_jornada))
+        )
+
         df_jornada["Duelo"] = (
-            df_jornada[col_local].astype(str)
-            + " vs "
-            + df_jornada[col_visita].astype(str)
+            loc_series.astype(str) + " vs " + vis_series.astype(str)
         )
 
         partido_sel = st.selectbox(
             "Seleccionar Partido", df_jornada["Duelo"].unique()
         )
 
-        # Obtener datos de la fila
+        # Fila activa
         fila = df_jornada[df_jornada["Duelo"] == partido_sel].iloc[0]
 
         st.markdown("---")
         st.header("⚙️ Parámetros del Partido")
 
-        local = str(fila.get("Local", "Local"))
-        visita = str(fila.get("Visita", "Visita"))
-        hora = str(fila.get("Hora", "15:00"))
-        plaza = str(fila.get("Ciudad", "Lima"))
-        estadio = str(fila.get("Estadio", "Estadio Principal"))
+        local = str(fila.get(c_local, "Local") if c_local else "Local")
+        visita = str(fila.get(c_visita, "Visita") if c_visita else "Visita")
+        hora = str(fila.get(c_hora, "15:00") if c_hora else "15:00")
+        plaza = str(fila.get(c_ciudad, "Lima") if c_ciudad else "Lima")
+        estadio = str(
+            fila.get(c_estadio, "Estadio Principal")
+            if c_estadio
+            else "Estadio Principal"
+        )
 
         st.info(
             f"📍 **Plaza:** {plaza}\n\n🏟️ **Estadio:** {estadio}\n\n⏰ **Hora:** {hora}"
         )
 
-        # Determinación automática de superficie
         es_sintetica_auto = any(
             p.lower() in plaza.lower() for p in PLAZAS_SINTETICAS
         )
@@ -182,27 +209,67 @@ if excel_conectado:
         )
 
         lambda_l = st.number_input(
-            "Prom. Goles Local (λ)", 0.5, 4.0, float(fila.get("Lambda_Local", 1.5)), 0.1
+            "Prom. Goles Local (λ)",
+            0.5,
+            4.0,
+            float(
+                fila.get(
+                    "Lambda_Local", fila.get("Prom_Goles_Local", 1.5)
+                )
+            ),
+            0.1,
         )
         lambda_v = st.number_input(
-            "Prom. Goles Visita (λ)", 0.5, 4.0, float(fila.get("Lambda_Visita", 1.0)), 0.1
+            "Prom. Goles Visita (λ)",
+            0.5,
+            4.0,
+            float(
+                fila.get(
+                    "Lambda_Visita", fila.get("Prom_Goles_Visita", 1.0)
+                )
+            ),
+            0.1,
         )
 
         urgencia_l = st.slider(
-            "Urgencia Local", 1, 5, int(fila.get("Urgencia_Local", 3))
+            "Urgencia Local",
+            1,
+            5,
+            int(
+                fila.get(
+                    "Urgencia_Local", fila.get("Urgencia Local", 3)
+                )
+            ),
         )
         urgencia_v = st.slider(
-            "Urgencia Visita", 1, 5, int(fila.get("Urgencia_Visita", 3))
+            "Urgencia Visita",
+            1,
+            5,
+            int(
+                fila.get(
+                    "Urgencia_Visita", fila.get("Urgencia Visita", 3)
+                )
+            ),
         )
 
         vino_de_golear = st.checkbox(
-            "Local viene de golear", value=bool(fila.get("Goleada_Previa", 0))
+            "Local viene de golear",
+            value=bool(
+                fila.get(
+                    "Goleada_Previa", fila.get("Goleada Previa", 0)
+                )
+            ),
         )
         desgaste_logistico = st.checkbox(
-            "Alerta de viaje en Visita", value=bool(fila.get("Desgaste_Viaje", 0))
+            "Alerta de viaje en Visita",
+            value=bool(
+                fila.get(
+                    "Desgaste_Viaje", fila.get("Desgaste Viaje", 0)
+                )
+            ),
         )
 
-    # Convertir hora a formato decimal para filtro térmico
+    # Conversión de hora
     try:
         h_str = str(hora).split(":")[0]
         m_str = str(hora).split(":")[1]
@@ -210,7 +277,6 @@ if excel_conectado:
     except Exception:
         hora_dec = 15.0
 
-    # Evaluación de Filtros
     es_calor_extremo = (
         1
         if (
