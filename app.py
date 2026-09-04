@@ -4,10 +4,10 @@ import pandas as pd
 import streamlit as st
 
 # =========================================================
-# 1. CONFIGURACIÓN Y LECTURA MULTI-HOJA
+# 1. CONFIGURACIÓN Y LECTURA
 # =========================================================
 st.set_page_config(
-    page_title="Predicciones Liga 1 - Sistema Integral",
+    page_title="Predicciones Liga 1 - Calibración Precisa",
     page_icon="⚽",
     layout="wide",
 )
@@ -31,15 +31,24 @@ PLAZAS_SINTETICAS = [
 
 
 @st.cache_data
-def cargar_todas_las_hojas():
-    """Lee las 4 pestañas de liga1_data.xlsx"""
+def cargar_datos():
     try:
         xls = pd.ExcelFile("liga1_data.xlsx")
-
-        df_partidos = (
-            pd.read_excel(xls, "Partidos_Fecha")
+        df_partidos = pd.read_excel(
+            xls,
+            "Partidos_Fecha"
             if "Partidos_Fecha" in xls.sheet_names
-            else pd.read_excel(xls, xls.sheet_names[0])
+            else xls.sheet_names[0],
+        )
+        df_geo = (
+            pd.read_excel(xls, "Data_Geografica")
+            if "Data_Geografica" in xls.sheet_names
+            else pd.DataFrame()
+        )
+        df_tabla = (
+            pd.read_excel(xls, "Tabla_Posiciones_Clausura")
+            if "Tabla_Posiciones_Clausura" in xls.sheet_names
+            else pd.DataFrame()
         )
 
         df_res = (
@@ -48,77 +57,20 @@ def cargar_todas_las_hojas():
             else pd.DataFrame()
         )
 
-        df_geo = (
-            pd.read_excel(xls, "Data_Geografica")
-            if "Data_Geografica" in xls.sheet_names
-            else pd.DataFrame()
-        )
+        df_partidos.columns = df_partidos.columns.astype(str).str.strip()
+        if not df_geo.empty:
+            df_geo.columns = df_geo.columns.astype(str).str.strip()
+        if not df_tabla.empty:
+            df_tabla.columns = df_tabla.columns.astype(str).str.strip()
+        if not df_res.empty:
+            df_res.columns = df_res.columns.astype(str).str.strip()
 
-        df_tabla = (
-            pd.read_excel(xls, "Tabla_Posiciones_Clausura")
-            if "Tabla_Posiciones_Clausura" in xls.sheet_names
-            else pd.DataFrame()
-        )
-
-        return df_partidos, df_res, df_geo, df_tabla
+        return df_partidos, df_geo, df_tabla, df_res
     except Exception:
         return None, None, None, None
 
 
-df_partidos, df_res, df_geo, df_tabla = cargar_todas_las_hojas()
-
-
-def calcular_lambdas_dinamicos(local, visita, df_resultados):
-    """Calcula el rendimiento real en base a los partidos jugados en Resultados_Clausura."""
-    if df_resultados.empty or len(df_resultados.columns) < 5:
-        return 1.8, 0.8
-
-    # Detección posicional de columnas:
-    # Col 0: Jornada | Col 1: Local | Col 2: Goles_Local | Col 3: Goles_Visita | Col 4: Visita
-    col_loc = df_resultados.columns[1]
-    col_gl = df_resultados.columns[2]
-    col_gv = df_resultados.columns[3]
-    col_vis = df_resultados.columns[4]
-
-    # Partidos de local del equipo Local
-    p_loc = df_resultados[
-        df_resultados[col_loc].astype(str).str.contains(local, case=False)
-    ]
-    g_favor_loc = (
-        pd.to_numeric(p_loc[col_gl], errors="coerce").mean()
-        if not p_loc.empty
-        else 1.8
-    )
-
-    # Partidos de visita del equipo Visita
-    p_vis = df_resultados[
-        df_resultados[col_vis].astype(str).str.contains(visita, case=False)
-    ]
-    g_rec_vis = (
-        pd.to_numeric(p_vis[col_gl], errors="coerce").mean()
-        if not p_vis.empty
-        else 1.4
-    )
-    g_favor_vis = (
-        pd.to_numeric(p_vis[col_gv], errors="coerce").mean()
-        if not p_vis.empty
-        else 0.8
-    )
-
-    lambda_loc = round(
-        (
-            g_favor_loc
-            if not np.isnan(g_favor_loc)
-            else 1.8 + (g_rec_vis if not np.isnan(g_rec_vis) else 1.4)
-        )
-        / 2.0,
-        2,
-    )
-    lambda_vis = round(
-        g_favor_vis if not np.isnan(g_favor_vis) else 0.8, 2
-    )
-
-    return max(0.5, lambda_loc), max(0.3, lambda_vis)
+df_partidos, df_geo, df_tabla, df_res = cargar_datos()
 
 
 # =========================================================
@@ -185,8 +137,6 @@ def modelo_regresion_logistica(features):
 st.title("⚽ Predicciones Liga 1 - Análisis Integral")
 
 if df_partidos is not None:
-    tiene_res = df_res is not None and not df_res.empty
-
     with st.sidebar:
         st.header("🗓️ Selección de Partido")
         jornadas = df_partidos["Jornada"].dropna().unique()
@@ -213,13 +163,33 @@ if df_partidos is not None:
             fila.get("Estadio", "Estadio Campeones del 36")
         )
 
-        # Cálculo dinámico de Lambdas usando la hoja Resultados_Clausura
-        lambda_l_auto, lambda_v_auto = calcular_lambdas_dinamicos(
-            local, visita, df_res
+        # Ajuste por defecto específico para Alianza Atlético (2.33 si es local)
+        def_lambda_l = (
+            2.33
+            if "Alianza" in local
+            else 1.80
+        )
+        def_lambda_v = 0.67 if "UTC" in visita else 0.90
+
+        st.markdown("---")
+        st.header("⚙️ Variables de Promedio de Gol (λ)")
+        lambda_l = st.number_input(
+            f"Prom. Goles Local ({local})",
+            0.5,
+            4.0,
+            float(def_lambda_l),
+            0.05,
+        )
+        lambda_v = st.number_input(
+            f"Prom. Goles Visita ({visita})",
+            0.1,
+            4.0,
+            float(def_lambda_v),
+            0.05,
         )
 
         st.markdown("---")
-        st.header("⚙️ Variables Contextuales")
+        st.header("⚙️ Entorno y Forma")
         es_sintetica_auto = any(
             p.lower() in plaza.lower() for p in PLAZAS_SINTETICAS
         )
@@ -227,21 +197,6 @@ if df_partidos is not None:
             "Gramado",
             ["Natural", "Sintético"],
             index=1 if es_sintetica_auto else 0,
-        )
-
-        lambda_l = st.number_input(
-            f"Prom. Goles Local ({local})",
-            0.5,
-            4.0,
-            float(lambda_l_auto),
-            0.1,
-        )
-        lambda_v = st.number_input(
-            f"Prom. Goles Visita ({visita})",
-            0.3,
-            4.0,
-            float(lambda_v_auto),
-            0.1,
         )
 
         urgencia_l = st.slider("Urgencia Local", 1, 5, 4)
@@ -293,7 +248,7 @@ if df_partidos is not None:
 
     st.subheader(f"📊 INFORME DETALLADO: {local} vs {visita}")
     st.markdown(
-        f"📍 **Plaza:** {plaza} | ⏰ **Hora:** {hora} hrs | 📊 **Historial Clausura Integrado:** {'Sí' if tiene_res else 'No'}"
+        f"📍 **Plaza:** {plaza} | ⏰ **Hora:** {hora} hrs | 🏟️ **Estadio:** {estadio} ({tipo_cancha})"
     )
 
     if es_calor_extremo:
