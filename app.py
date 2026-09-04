@@ -1,14 +1,10 @@
-import datetime
 import math
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-# =========================================================
-# 1. CONFIGURACIÓN Y LECTURA AUTOMÁTICA DEL FIXTURE
-# =========================================================
 st.set_page_config(
-    page_title="Predicciones Liga 1 - Sistema con Fixture Real",
+    page_title="Predicciones Liga 1 - Modelo Dinámico",
     page_icon="⚽",
     layout="wide",
 )
@@ -21,359 +17,152 @@ PLAZAS_CALOR = [
     "Iquitos",
     "Chongoyape",
 ]
-PLAZAS_SINTETICAS = [
-    "Juliaca",
-    "Andahuaylas",
-    "Trujillo",
-    "Nueva Cajamarca",
-    "Cajamarca",
-    "Cutervo",
-]
 
 
 @st.cache_data
-def cargar_datos_excel():
-    """Lee el archivo liga1_data.xlsx y limpia los encabezados."""
+def cargar_datos_completos():
     try:
-        df = pd.read_excel("liga1_data.xlsx", sheet_name="Fecha8")
+        xls = pd.ExcelFile("liga1_data.xlsx")
+
+        df_partidos = pd.read_excel(
+            xls,
+            "Partidos_Fecha"
+            if "Partidos_Fecha" in xls.sheet_names
+            else xls.sheet_names[0],
+        )
+
+        df_jugados = (
+            pd.read_excel(xls, "Resultados_Clausura")
+            if "Resultados_Clausura" in xls.sheet_names
+            else pd.DataFrame()
+        )
+
+        df_partidos.columns = df_partidos.columns.astype(str).str.strip()
+        if not df_jugados.empty:
+            df_jugados.columns = df_jugados.columns.astype(str).str.strip()
+
+        return df_partidos, df_jugados
     except Exception:
-        df = pd.read_excel("liga1_data.xlsx")
-
-    df.columns = df.columns.astype(str).str.strip()
-    return df
+        return None, None
 
 
-try:
-    df_fixture = cargar_datos_excel()
-    excel_conectado = True
-except Exception:
-    excel_conectado = False
+df_partidos, df_jugados = cargar_datos_completos()
 
 
-def buscar_columna(df, opciones, valor_defecto=""):
-    """Busca una columna de forma segura sin causar IndexError."""
-    for op in opciones:
-        for col in df.columns:
-            if col.lower() == op.lower():
-                return col
-    return None
+def calcular_lambdas_dinamicos(equipo_local, equipo_visita, df_historial):
+    """Calcula el rendimiento real en base a los partidos jugados en el Clausura."""
+    if df_historial.empty:
+        return 1.6, 0.9  # Valores estándar si no hay historial
 
-
-# =========================================================
-# 2. MOTORES MATEMÁTICOS (POISSON + SIGMOIDE)
-# =========================================================
-def calcular_poisson(lambda_local, lambda_visita, max_goles=5):
-    matriz_prob = np.zeros((max_goles + 1, max_goles + 1))
-    for i in range(max_goles + 1):
-        for j in range(max_goles + 1):
-            prob_i = (
-                (lambda_local**i) * math.exp(-lambda_local)
-            ) / math.factorial(i)
-            prob_j = (
-                (lambda_visita**j) * math.exp(-lambda_visita)
-            ) / math.factorial(j)
-            matriz_prob[i][j] = prob_i * prob_j
-
-    prob_local = np.sum(np.tril(matriz_prob, -1))
-    prob_empate = np.sum(np.diag(matriz_prob))
-    prob_visita = np.sum(np.triu(matriz_prob, 1))
-
-    prob_bts = 0
-    for i in range(1, max_goles + 1):
-        for j in range(1, max_goles + 1):
-            prob_bts += matriz_prob[i][j]
-
-    return prob_local, prob_empate, prob_visita, prob_bts
-
-
-def funcion_sigmoide(z):
-    return 1.0 / (1.0 + math.exp(-z))
-
-
-def modelo_regresion_logistica(features):
-    (
-        lambda_l,
-        lambda_v,
-        clima_3pm,
-        goleada,
-        desgaste,
-        sintetica,
-        urg_l,
-        urg_v,
-    ) = features
-
-    z_1x2 = (
-        0.20
-        + (0.35 * (lambda_l - lambda_v))
-        - (0.25 * clima_3pm)
-        - (0.30 * goleada)
-        + (0.45 * desgaste)
-        + (0.40 * sintetica)
-        + (0.15 * (urg_l - urg_v))
+    # Partidos de local del equipo Local
+    partidos_loc = df_historial[
+        df_historial["Local"].astype(str).str.contains(equipo_local, case=False)
+    ]
+    goles_f_loc = (
+        partidos_loc["Goles_Local"].mean() if not partidos_loc.empty else 1.5
     )
 
-    z_bts = (
-        -0.10
-        + (0.25 * (lambda_l + lambda_v))
-        - (0.50 * clima_3pm)
-        - (0.35 * goleada)
-        - (0.20 * desgaste)
+    # Partidos de visita del equipo Visita
+    partidos_vis = df_historial[
+        df_historial["Visita"]
+        .astype(str)
+        .str.contains(equipo_visita, case=False)
+    ]
+    goles_rec_vis = (
+        partidos_vis["Goles_Local"].mean() if not partidos_vis.empty else 1.2
+    )
+    goles_f_vis = (
+        partidos_vis["Goles_Visita"].mean() if not partidos_vis.empty else 0.8
     )
 
-    return funcion_sigmoide(z_1x2), funcion_sigmoide(z_bts)
+    # Estimación ponderada de Lambda
+    lambda_local = max(0.5, round((goles_f_loc + goles_rec_vis) / 2.0, 2))
+    lambda_visita = max(0.4, round(goles_f_vis, 2))
+
+    return lambda_local, lambda_visita
 
 
-# =========================================================
-# 3. INTERFAZ Y PROCESAMIENTO
-# =========================================================
-st.title("⚽ Predicciones Liga 1 - Sistema con Fixture Real")
+def calcular_poisson(lambda_l, lambda_v, max_g=5):
+    mat = np.zeros((max_g + 1, max_g + 1))
+    for i in range(max_g + 1):
+        for j in range(max_g + 1):
+            p_i = ((lambda_l**i) * math.exp(-lambda_l)) / math.factorial(i)
+            p_j = ((lambda_v**j) * math.exp(-lambda_v)) / math.factorial(j)
+            mat[i][j] = p_i * p_j
 
-if excel_conectado:
-    st.success("🟢 **Base de datos conectada correctamente desde Excel.**")
-
-    # Mapeo ultraseguro de nombres de columna
-    c_jornada = buscar_columna(df_fixture, ["Jornada", "Fecha", "Fecha_N"])
-    c_local = buscar_columna(
-        df_fixture, ["Local", "Equipo Local", "Equipo_Local"]
+    p_loc = np.sum(np.tril(mat, -1))
+    p_emp = np.sum(np.diag(mat))
+    p_vis = np.sum(np.triu(mat, 1))
+    p_bts = sum(
+        mat[i][j] for i in range(1, max_g + 1) for j in range(1, max_g + 1)
     )
-    c_visita = buscar_columna(
-        df_fixture, ["Visita", "Visitante", "Equipo Visita"]
-    )
-    c_ciudad = buscar_columna(df_fixture, ["Ciudad", "Plaza"])
-    c_estadio = buscar_columna(df_fixture, ["Estadio", "Cancha_Nombre"])
-    c_hora = buscar_columna(df_fixture, ["Hora", "Horario"])
 
+    return p_loc, p_emp, p_vis, p_bts
+
+
+# INTERFAZ Y PROCESAMIENTO
+st.title("⚽ Predicciones Liga 1 - Análisis con Historial de Partidos")
+
+if df_partidos is not None:
     with st.sidebar:
-        st.header("🗓️ Navegación de Partidos")
+        st.header("🗓️ Partido a Analizar")
+        jornadas = df_partidos["Jornada"].dropna().unique()
+        jornada_sel = st.selectbox("Jornada", jornadas)
 
-        # Manejo condicional si existe la columna Jornada
-        if c_jornada and c_jornada in df_fixture.columns:
-            jornadas_disponibles = df_fixture[c_jornada].dropna().unique()
-            jornada_sel = st.selectbox(
-                "Seleccionar Jornada", jornadas_disponibles
-            )
-            df_jornada = df_fixture[
-                df_fixture[c_jornada] == jornada_sel
-            ].copy()
-        else:
-            jornada_sel = "Fecha General"
-            df_jornada = df_fixture.copy()
-
-        # Generar columna Duelo
-        loc_series = (
-            df_jornada[c_local]
-            if c_local
-            else pd.Series(["Local"] * len(df_jornada))
-        )
-        vis_series = (
-            df_jornada[c_visita]
-            if c_visita
-            else pd.Series(["Visita"] * len(df_jornada))
-        )
-
+        df_jornada = df_partidos[df_partidos["Jornada"] == jornada_sel].copy()
         df_jornada["Duelo"] = (
-            loc_series.astype(str) + " vs " + vis_series.astype(str)
+            df_jornada["Local"].astype(str)
+            + " vs "
+            + df_jornada["Visita"].astype(str)
         )
+        partido_sel = st.selectbox("Duelo", df_jornada["Duelo"].unique())
 
-        partido_sel = st.selectbox(
-            "Seleccionar Partido", df_jornada["Duelo"].unique()
-        )
-
-        # Fila activa
         fila = df_jornada[df_jornada["Duelo"] == partido_sel].iloc[0]
+        local = str(fila.get("Local", "Local"))
+        visita = str(fila.get("Visita", "Visita"))
+        hora = str(fila.get("Hora", "15:15"))
+        plaza = str(fila.get("Ciudad", "Sullana"))
+
+        # Cálculo dinámico de Lambdas
+        lambda_l_auto, lambda_v_auto = calcular_lambdas_dinamicos(
+            local, visita, df_jugados
+        )
 
         st.markdown("---")
-        st.header("⚙️ Parámetros del Partido")
-
-        local = str(fila.get(c_local, "Local") if c_local else "Local")
-        visita = str(fila.get(c_visita, "Visita") if c_visita else "Visita")
-        hora = str(fila.get(c_hora, "15:00") if c_hora else "15:00")
-        plaza = str(fila.get(c_ciudad, "Lima") if c_ciudad else "Lima")
-        estadio = str(
-            fila.get(c_estadio, "Estadio Principal")
-            if c_estadio
-            else "Estadio Principal"
-        )
-
-        st.info(
-            f"📍 **Plaza:** {plaza}\n\n🏟️ **Estadio:** {estadio}\n\n⏰ **Hora:** {hora}"
-        )
-
-        es_sintetica_auto = any(
-            p.lower() in plaza.lower() for p in PLAZAS_SINTETICAS
-        )
-        tipo_cancha = st.selectbox(
-            "Gramado",
-            ["Natural", "Sintético"],
-            index=1 if es_sintetica_auto else 0,
-        )
-
+        st.header("⚙️ Promedios Detectados")
         lambda_l = st.number_input(
-            "Prom. Goles Local (λ)",
-            0.5,
-            4.0,
-            float(
-                fila.get(
-                    "Lambda_Local", fila.get("Prom_Goles_Local", 1.5)
-                )
-            ),
-            0.1,
+            f"λ Gol Local ({local})", 0.5, 4.0, float(lambda_l_auto), 0.1
         )
         lambda_v = st.number_input(
-            "Prom. Goles Visita (λ)",
-            0.5,
-            4.0,
-            float(
-                fila.get(
-                    "Lambda_Visita", fila.get("Prom_Goles_Visita", 1.0)
-                )
-            ),
-            0.1,
+            f"λ Gol Visita ({visita})", 0.3, 4.0, float(lambda_v_auto), 0.1
         )
 
-        urgencia_l = st.slider(
-            "Urgencia Local",
-            1,
-            5,
-            int(
-                fila.get(
-                    "Urgencia_Local", fila.get("Urgencia Local", 3)
-                )
-            ),
-        )
-        urgencia_v = st.slider(
-            "Urgencia Visita",
-            1,
-            5,
-            int(
-                fila.get(
-                    "Urgencia_Visita", fila.get("Urgencia Visita", 3)
-                )
-            ),
-        )
+    p_loc, p_emp, p_vis, p_bts = calcular_poisson(lambda_l, lambda_v)
+    prob_1x = p_loc + p_emp
 
-        vino_de_golear = st.checkbox(
-            "Local viene de golear",
-            value=bool(
-                fila.get(
-                    "Goleada_Previa", fila.get("Goleada Previa", 0)
-                )
-            ),
-        )
-        desgaste_logistico = st.checkbox(
-            "Alerta de viaje en Visita",
-            value=bool(
-                fila.get(
-                    "Desgaste_Viaje", fila.get("Desgaste Viaje", 0)
-                )
-            ),
-        )
-
-    # Conversión de hora
-    try:
-        h_str = str(hora).split(":")[0]
-        m_str = str(hora).split(":")[1]
-        hora_dec = int(h_str) + int(m_str) / 60.0
-    except Exception:
-        hora_dec = 15.0
-
-    es_calor_extremo = (
-        1
-        if (
-            any(p.lower() in plaza.lower() for p in PLAZAS_CALOR)
-            and 13.0 <= hora_dec <= 15.5
-        )
-        else 0
-    )
-    es_sintetica = 1 if tipo_cancha == "Sintético" else 0
-    es_goleada = 1 if vino_de_golear else 0
-    es_desgaste = 1 if desgaste_logistico else 0
-
-    p_loc_poi, p_emp_poi, p_vis_poi, p_bts_poi = calcular_poisson(
-        lambda_l, lambda_v
-    )
-    features = [
-        lambda_l,
-        lambda_v,
-        es_calor_extremo,
-        es_goleada,
-        es_desgaste,
-        es_sintetica,
-        urgencia_l,
-        urgencia_v,
-    ]
-    p_1x2_log, p_bts_log = modelo_regresion_logistica(features)
-
-    prob_1x_final = ((p_loc_poi + p_emp_poi) + p_1x2_log) / 2.0
-    prob_bts_final = (p_bts_poi + p_bts_log) / 2.0
-
-    # =========================================================
-    # 4. INFORME DETALLADO
-    # =========================================================
-    st.markdown("---")
-    st.subheader(f"📊 INFORME DETALLADO: {local} vs {visita}")
-    st.markdown(
-        f"🗓️ **{jornada_sel}** | ⏰ **Hora:** {hora} hrs ({plaza}) | 🏟️ **Estadio:** {estadio} ({tipo_cancha})"
+    st.subheader(f"📊 Análisis Evaluado: {local} vs {visita}")
+    st.write(
+        f"📍 **Plaza:** {plaza} | ⏰ **Hora:** {hora} | 📊 **Historial Clausura Integrado:** {'Sí' if not df_jugados.empty else 'No'}"
     )
 
-    if es_calor_extremo:
-        st.error(
-            "⚠️ **FILTRO CLIMÁTICO ACTIVO:** Calor Extremo detectado en la plaza. El ritmo tiende a desacelerar en el 2do tiempo."
-        )
-    if es_goleada:
-        st.warning(
-            "⚠️ **ALERTA DE REGRESIÓN A LA MEDIA:** El local viene de golear. Se ajusta a la baja la expectativa de goleada."
-        )
-
-    col_c1, col_c2 = st.columns(2)
-
-    with col_c1:
-        st.markdown("### 🛡️ Capa 1: Presión por Objetivos (Tabla)")
-        st.write(f"* **Nivel de Urgencia Local:** {urgencia_l}/5")
-        st.write(f"* **Nivel de Urgencia Visita:** {urgencia_v}/5")
-
-        st.markdown("### 📈 Capa 2: Forma, Cancha y Logística")
-        st.write(
-            f"* **Racha Local:** {'Viene de golear' if es_goleada else 'Forma estándar'}"
-        )
-        st.write(
-            f"* **Estado Visita:** {'Desgaste de viaje' if es_desgaste else 'Traslado normal'}"
-        )
-
-    with col_c2:
-        st.markdown("### 🧮 Capa 3: Métricas Híbridas")
-        st.write(f"* **Poisson (1X):** {((p_loc_poi + p_emp_poi)*100):.1f}%")
-        st.write(f"* **Regresión Logística (1X):** {(p_1x2_log*100):.1f}%")
-        st.write(f"* **Poisson (Ambos Anotan):** {(p_bts_poi*100):.1f}%")
-        st.write(
-            f"* **Regresión Logística (Ambos Anotan):** {(p_bts_log*100):.1f}%"
-        )
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Probabilidad Gana Local / Empate (1X)", f"{prob_1x*100:.1f}%")
+        st.metric("Probabilidad Victoria Local Seca", f"{p_loc*100:.1f}%")
+    with col2:
+        st.metric("Probabilidad Ambos Anotan (BTS)", f"{p_bts*100:.1f}%")
+        st.metric("Probabilidad Empate", f"{p_emp*100:.1f}%")
 
     st.markdown("---")
-    st.markdown("### 🧠 Capa 4: Sugerencia Final del Sistema")
+    st.markdown("### 🎯 Sugerencia de Apuesta")
 
-    if es_calor_extremo and es_goleada:
-        rec_resultado = f"**Doble Oportunidad: {local} o Empate (1X)** o Victoria ajustada por 1 gol."
-        rec_goles = "**Menos de 2.5 Goles / Ambos Anotan: NO** (Ajuste por desaceleración climática)."
-    elif prob_1x_final > 0.65:
-        rec_resultado = (
-            f"**Gana {local} Seco** o **1X** (Alta coincidencia de modelos)."
-        )
-        rec_goles = (
-            "**Más de 1.5 Goles**"
-            if prob_bts_final > 0.5
-            else "**Ambos Anotan: NO**"
+    if prob_1x >= 0.65:
+        st.success(
+            f"✅ **Doble Oportunidad {local} o Empate (1X)** (Elevado respaldo por rendimiento en Clausura)"
         )
     else:
-        rec_resultado = (
-            "**Partido Reservado / Doble Oportunidad Visita o Empate**"
+        st.warning(
+            "⚠️ **Partido de Pronóstico Reservado / Probar hándicap o goles**"
         )
-        rec_goles = "**Menos de 2.5 Goles**"
-
-    st.success(f"🎯 **Sugerencia de Resultado:** {rec_resultado}")
-    st.info(f"⚽ **Sugerencia de Goles:** {rec_goles}")
-
 else:
-    st.error(
-        "🔴 **No se encontró el archivo `liga1_data.xlsx`.** Revisa que esté subido a GitHub."
-    )
+    st.error("No se pudo cargar el archivo Excel.")
