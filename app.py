@@ -1,3 +1,4 @@
+import re
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson
@@ -11,8 +12,8 @@ st.set_page_config(
 )
 
 
-# --- 1. CARGA DE DATOS ---
-@st.cache_data
+# --- 1. CARGA DE DATOS (CON LIMPIEZA DE CACHÉ) ---
+@st.cache_data(ttl=60)  # Recarga automática cada 60 segundos si el Excel cambia
 def cargar_datos():
   excel_path = "Liga1_2026.xlsx"
 
@@ -33,18 +34,26 @@ def cargar_datos():
 df_geo, df_resultados, df_proximos, df_clausura, df_acumulado = cargar_datos()
 
 
-# --- 2. FUNCIONES AUXILIARES DE EXTRACCIÓN Y CONDICIÓN ---
+# --- 2. FUNCIONES AUXILIARES DE LIMPIEZA Y BÚSQUEDA ---
+def normalizar_texto(texto):
+  """Estandariza los nombres de los equipos para garantizar coincidencias exactas."""
+  if not isinstance(texto, str):
+    return ""
+  txt = texto.lower().strip()
+  txt = re.sub(r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion)\b", "", txt)
+  return re.sub(r"\s+", " ", txt).strip()
+
+
 def obtener_fuerza_especifica(
     equipo_local, equipo_visita, df_resultados_hist, df_tabla
 ):
-  """Calcula de forma precisa el ataque y defensa del LOCAL jugando de LOCAL
+  """Calcula de forma precisa el ataque y defensa del LOCAL de Local
 
-  y del VISITANTE jugando de VISITANTE usando los partidos disputados.
+  y del VISITANTE de Visita usando el historial real de partidos.
   """
-  nombre_loc = str(equipo_local).strip().lower()
-  nombre_vis = str(equipo_visita).strip().lower()
+  norm_loc = normalizar_texto(equipo_local)
+  norm_vis = normalizar_texto(equipo_visita)
 
-  # Búsqueda dinámica de columnas en Resultados_Clausura
   c_loc = next(
       (c for c in df_resultados_hist.columns if "local" in c.lower()), None
   )
@@ -68,15 +77,15 @@ def obtener_fuerza_especifica(
       None,
   )
 
-  # Valores base de rescate
-  att_loc, def_loc = 1.35, 1.35
-  att_vis, def_vis = 1.35, 1.35
+  # Promedios de referencia de la liga peruana
+  att_loc, def_loc = 1.30, 1.10
+  att_vis, def_vis = 0.90, 1.45
 
-  # Rendimiento de FC Cajamarca / Local en CASA
   if c_loc and c_gloc and c_gvis:
-    p_local = df_resultados_hist[
-        df_resultados_hist[c_loc].astype(str).str.lower().str.contains(nombre_loc)
-    ]
+    mask_loc = df_resultados_hist[c_loc].astype(str).apply(
+        lambda x: norm_loc in normalizar_texto(x) or normalizar_texto(x) in norm_loc
+    )
+    p_local = df_resultados_hist[mask_loc]
     if not p_local.empty:
       try:
         gf = p_local[c_gloc].astype(float).sum()
@@ -88,11 +97,11 @@ def obtener_fuerza_especifica(
       except Exception:
         pass
 
-  # Rendimiento de Cienciano / Visita FUERA DE CASA
   if c_vis and c_gloc and c_gvis:
-    p_visita = df_resultados_hist[
-        df_resultados_hist[c_vis].astype(str).str.lower().str.contains(nombre_vis)
-    ]
+    mask_vis = df_resultados_hist[c_vis].astype(str).apply(
+        lambda x: norm_vis in normalizar_texto(x) or normalizar_texto(x) in norm_vis
+    )
+    p_visita = df_resultados_hist[mask_vis]
     if not p_visita.empty:
       try:
         gf = p_visita[c_gvis].astype(float).sum()
@@ -108,13 +117,14 @@ def obtener_fuerza_especifica(
 
 
 def obtener_altitud(equipo_nombre, df_geo_info):
-  """Obtiene la altitud en msnm del equipo desde la pestaña geográfica."""
-  nombre_search = str(equipo_nombre).strip().lower()
+  norm_search = normalizar_texto(equipo_nombre)
   col_eq = df_geo_info.columns[0]
 
-  row = df_geo_info[
-      df_geo_info[col_eq].astype(str).str.lower().str.contains(nombre_search)
-  ]
+  mask = df_geo_info[col_eq].astype(str).apply(
+      lambda x: norm_search in normalizar_texto(x)
+      or normalizar_texto(x) in norm_search
+  )
+  row = df_geo_info[mask]
 
   if not row.empty:
     col_alt = next(
@@ -128,9 +138,8 @@ def obtener_altitud(equipo_nombre, df_geo_info):
   return 0.0
 
 
-# --- 3. MOTOR MATEMÁTICO: MODELO DIXON-COLES ---
+# --- 3. MOTOR MATEMÁTICO DIXON-COLES ---
 def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.13):
-  """Función Tau para corregir marcadores de baja anotación en Dixon-Coles."""
   if x == 0 and y == 0:
     return 1.0 - (lambda_param * mu_param * rho)
   elif x == 0 and y == 1:
@@ -151,33 +160,29 @@ def calcular_dixon_coles(
     df_geo_info,
     rho=-0.13,
 ):
-  promedio_goles_liga = 1.35
+  promedio_goles_liga = 1.30
 
-  # 1. Obtención de métricas desglosadas por Local / Visita específica
   att_loc, def_loc, att_vis, def_vis = obtener_fuerza_especifica(
       equipo_local, equipo_visita, df_resultados_hist, df_tabla
   )
 
-  # 2. Factor Geográfico Relativo (Diferencial de Altitud)
   alt_loc = obtener_altitud(equipo_local, df_geo_info)
   alt_vis = obtener_altitud(equipo_visita, df_geo_info)
 
   dif_altitud = max(0.0, alt_loc - alt_vis)
   factor_altitud = 1.0 + (dif_altitud / 10000.0)
 
-  # 3. Ventaja de Localía Dinámica (no regala ventaja si el local defiende mal)
-  home_advantage = 1.15 if def_loc <= att_loc else 1.02
+  # Ventaja de localía moderada
+  home_advantage = 1.12 if def_loc <= att_loc else 1.02
 
-  # 4. Intensidades esperadas de Gol (Lambda para Local, Mu para Visita)
   lambda_local = max(
-      0.3,
+      0.40,
       (att_loc * (def_vis / promedio_goles_liga))
       * home_advantage
       * factor_altitud,
   )
-  mu_visita = max(0.3, (att_vis * (def_loc / promedio_goles_liga)))
+  mu_visita = max(0.40, (att_vis * (def_loc / promedio_goles_liga)))
 
-  # 5. Construcción de la matriz con corrección Dixon-Coles
   max_goles = 9
   matriz_prob = np.zeros((max_goles, max_goles))
 
@@ -192,12 +197,12 @@ def calcular_dixon_coles(
   if total_p > 0:
     matriz_prob /= total_p
 
-  # Cálculo de Resultados 1X2
+  # 1X2
   prob_empate = float(np.trace(matriz_prob))
   prob_local = float(np.tril(matriz_prob, -1).sum())
   prob_visita = float(np.triu(matriz_prob, 1).sum())
 
-  # Mercado de Goles Over / Under 2.5
+  # Mercado Over / Under 2.5
   prob_under25 = sum(
       matriz_prob[i, j]
       for i in range(max_goles)
@@ -206,7 +211,7 @@ def calcular_dixon_coles(
   )
   prob_over25 = 1.0 - prob_under25
 
-  # Mercado Ambos Anotan (BTTS)
+  # Mercado BTTS (Ambos Anotan)
   prob_no_btts = (
       matriz_prob[0, :].sum()
       + matriz_prob[:, 0].sum()
@@ -220,6 +225,11 @@ def calcular_dixon_coles(
 # --- 4. ENCABEZADO Y PESTAÑAS ---
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
 st.subheader("Modelo Estadístico Dixon-Coles para la Liga 1 Peruana")
+
+# Botón en la barra lateral para forzar recarga del Excel si se hicieron cambios
+if st.sidebar.button("🔄 Recargar Datos del Excel"):
+  st.cache_data.clear()
+  st.rerun()
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🎯 Pronóstico Individual por Partido",
@@ -259,7 +269,7 @@ with tab1:
   equipo_local = str(row_match["Local"]).strip()
   equipo_visita = str(row_match["Visita"]).strip()
 
-  # CÁLCULO DIXON-COLES EN TIEMPO REAL CON EXCEL
+  # CÁLCULO DIXON-COLES
   prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si = (
       calcular_dixon_coles(
           equipo_local,
@@ -273,7 +283,7 @@ with tab1:
   prob_under25 = 1.0 - prob_over25
   prob_btts_no = 1.0 - prob_btts_si
 
-  # --- FORMATO FECHA Y LUGAR ---
+  # FORMATO FECHA Y LUGAR
   f_val = str(row_match.get("Fecha", "")).strip()
   d_val = str(row_match.get("Dia", "")).strip()
   h_val = str(row_match.get("Hora", "")).strip()
@@ -300,7 +310,7 @@ with tab1:
 
   st.write("---")
 
-  # --- VISUALIZACIÓN PROBABILIDADES 1X2 Y CUOTAS JUSTAS ---
+  # VISUALIZACIÓN PROBABILIDADES 1X2 Y CUOTAS JUSTAS
   cuota_local = round(1 / prob_local, 2) if prob_local > 0 else 0
   cuota_empate = round(1 / prob_empate, 2) if prob_empate > 0 else 0
   cuota_visita = round(1 / prob_visita, 2) if prob_visita > 0 else 0
@@ -321,7 +331,7 @@ with tab1:
     st.markdown(f"### {prob_visita*100:.1f}%")
     st.caption(f"↑ Cuota Justa: {cuota_visita}")
 
-  # --- PRONÓSTICO SUGERIDO (LA FIJA) ---
+  # PRONÓSTICO SUGERIDO (LA FIJA)
   if prob_local > 0.50:
     fija_txt = f"Gana {equipo_local} (Directo)"
     confian_txt = "Alta"
@@ -347,7 +357,7 @@ with tab1:
 
   st.write("---")
 
-  # --- RECOMENDACIONES DE GOLES Y BTTS ---
+  # RECOMENDACIONES DE GOLES Y BTTS
   if prob_over25 >= 0.58:
     sug_goles = "Más de 2.5 Goles (+2.5)"
     conf_goles = "Alta"
@@ -361,15 +371,13 @@ with tab1:
     sug_goles = "Menos de 3.5 Goles (-3.5)"
     conf_goles = "Media"
 
-  if prob_btts_si >= 0.56:
+  # Lógica de sugerencia de BTTS
+  if prob_btts_si > prob_btts_no:
     sug_btts = "Ambos Equipos Anotan (Sí)"
-    conf_btts = "Alta"
-  elif prob_btts_si >= 0.48:
-    sug_btts = "Ambos Equipos Anotan (Sí)"
-    conf_btts = "Media"
+    conf_btts = "Alta" if prob_btts_si >= 0.58 else "Media"
   else:
     sug_btts = "Ambos Equipos NO Anotan (No)"
-    conf_btts = "Media"
+    conf_btts = "Alta" if prob_btts_no >= 0.58 else "Media"
 
   col_goles, col_btts = st.columns(2)
 
