@@ -35,21 +35,33 @@ def normalizar_texto(texto):
   if not isinstance(texto, str):
     return ""
   txt = texto.lower().strip()
-  # Elimina prefijos institucionales comunes sin alterar nombres como Juan Pablo II College
+  # Elimina palabras estructurales pero preserva nombres clave (ej: "juan pablo", "alianza lima")
   txt = re.sub(
-      r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion|asociación)\b",
+      r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion|asociación|college)\b",
       "",
       txt,
   )
   return re.sub(r"\s+", " ", txt).strip()
 
 
+def coincidencia_equipo(nombre1, nombre2):
+  """Compara dos nombres de equipos mediante palabras clave principales."""
+  n1 = normalizar_texto(nombre1)
+  n2 = normalizar_texto(nombre2)
+  if not n1 or not n2:
+    return False
+
+  if n1 in n2 or n2 in n1:
+    return True
+
+  palabras_1 = set(n1.split())
+  palabras_2 = set(n2.split())
+  return len(palabras_1.intersection(palabras_2)) > 0
+
+
 def obtener_fuerza_ponderada(
     equipo_local, equipo_visita, df_resultados_hist, df_tabla_acumulada
 ):
-  norm_loc = normalizar_texto(equipo_local)
-  norm_vis = normalizar_texto(equipo_visita)
-
   c_loc = next(
       (c for c in df_resultados_hist.columns if "local" in c.lower()), None
   )
@@ -78,20 +90,18 @@ def obtener_fuerza_ponderada(
 
   if c_loc and c_vis and c_gloc and c_gvis:
     p_loc = df_resultados_hist[
-        df_resultados_hist[c_loc].astype(str).apply(
-            lambda x: norm_loc in normalizar_texto(x)
-            or normalizar_texto(x) in norm_loc
-        )
+        df_resultados_hist[c_loc]
+        .astype(str)
+        .apply(lambda x: coincidencia_equipo(equipo_local, x))
     ].copy()
 
     p_vis = df_resultados_hist[
-        df_resultados_hist[c_vis].astype(str).apply(
-            lambda x: norm_vis in normalizar_texto(x)
-            or normalizar_texto(x) in norm_vis
-        )
+        df_resultados_hist[c_vis]
+        .astype(str)
+        .apply(lambda x: coincidencia_equipo(equipo_visita, x))
     ].copy()
 
-    # CONTROL DE ATÍPICOS: Acotar goles a máximo 3.0 para evitar la distorsión del 5-1
+    # Recorte de outliers: Máximo 3.0 goles por partido para acotar el 5-1
     if not p_loc.empty:
       att_loc = p_loc[c_gloc].astype(float).clip(upper=3.0).mean()
       def_loc = p_loc[c_gvis].astype(float).clip(upper=3.0).mean()
@@ -100,7 +110,7 @@ def obtener_fuerza_ponderada(
       att_vis = p_vis[c_gvis].astype(float).clip(upper=3.0).mean()
       def_vis = p_vis[c_gloc].astype(float).clip(upper=3.0).mean()
 
-  # LECTURA DE PUNTOS EN LA TABLA ACUMULADA (FACTOR JERARQUÍA)
+  # BÚSQUEDA GARANTIZADA EN TABLA ACUMULADA
   pts_loc, pts_vis = None, None
   if not df_tabla_acumulada.empty:
     col_eq = df_tabla_acumulada.columns[0]
@@ -111,40 +121,43 @@ def obtener_fuerza_ponderada(
 
     if col_pts:
       for _, row in df_tabla_acumulada.iterrows():
-        nombre_tabla = normalizar_texto(str(row[col_eq]))
-
-        if norm_loc in nombre_tabla or nombre_tabla in norm_loc:
+        nombre_tabla = str(row[col_eq])
+        if (
+            pts_loc is None
+            and coincidencia_equipo(equipo_local, nombre_tabla)
+        ):
           try:
             pts_loc = float(row[col_pts])
           except Exception:
             pass
-        if norm_vis in nombre_tabla or nombre_tabla in norm_vis:
+        if (
+            pts_vis is None
+            and coincidencia_equipo(equipo_visita, nombre_tabla)
+        ):
           try:
             pts_vis = float(row[col_pts])
           except Exception:
             pass
 
-  # APLICAR CORRECCIÓN POR JERARQUÍA DE TABLA ACUMULADA
+  # PONDERACIÓN DE JERARQUÍA SEGÚN LA ACUMULADA
   if pts_loc is not None and pts_vis is not None:
     dif_pts = pts_vis - pts_loc
-    if dif_pts > 0:  # La visita supera en puntos al local
-      factor_vis = 1.0 + (dif_pts * 0.015)
+    if dif_pts > 0:  # La visita es superior en la tabla general
+      factor_vis = 1.0 + (dif_pts * 0.02)  # 2% de impulso por punto de diferencia
       att_vis *= factor_vis
       def_vis /= factor_vis
-    elif dif_pts < 0:  # El local supera en puntos a la visita
-      factor_loc = 1.0 + (abs(dif_pts) * 0.015)
+    elif dif_pts < 0:  # El local es superior
+      factor_loc = 1.0 + (abs(dif_pts) * 0.02)
       att_loc *= factor_loc
       def_loc /= factor_loc
 
-  return max(0.50, att_loc), max(0.50, def_loc), max(0.50, att_vis), max(0.50, def_vis)
+  return max(0.60, att_loc), max(0.60, def_loc), max(0.60, att_vis), max(0.60, def_vis)
 
 
 def obtener_altitud(equipo_nombre, df_geo_info):
-  norm_search = normalizar_texto(equipo_nombre)
   col_eq = df_geo_info.columns[0]
   mask = df_geo_info[col_eq].astype(str).apply(
-      lambda x: norm_search in normalizar_texto(x)
-      or normalizar_texto(x) in norm_search
+      lambda x: coincidencia_equipo(equipo_nombre, x)
   )
   row = df_geo_info[mask]
   if not row.empty:
@@ -192,7 +205,7 @@ def calcular_dixon_coles(
   dif_altitud = max(0.0, alt_loc - alt_vis)
   factor_altitud = 1.0 + (dif_altitud / 10000.0)
 
-  home_advantage = 1.08
+  home_advantage = 1.05
 
   lambda_local = (
       att_loc * (def_vis / promedio_goles_liga)
@@ -214,27 +227,8 @@ def calcular_dixon_coles(
     matriz_prob /= total_p
 
   prob_local = float(np.tril(matriz_prob, -1).sum())
+  prob_empate = float(np.trace(matriz_prob))
   prob_visita = float(np.triu(matriz_prob, 1).sum())
-
-  if prob_visita < 0.10:
-    mu_visita = max(0.20, mu_visita * (prob_visita / 0.10))
-    matriz_prob = np.zeros((max_goles, max_goles))
-    for x in range(max_goles):
-      for y in range(max_goles):
-        p_x = poisson.pmf(x, lambda_local)
-        p_y = poisson.pmf(y, mu_visita)
-        tau = tau_dixon_coles(x, y, lambda_local, mu_visita, rho)
-        matriz_prob[x, y] = max(0.0, p_x * p_y * tau)
-
-    total_p = matriz_prob.sum()
-    if total_p > 0:
-      matriz_prob /= total_p
-
-    prob_empate = float(np.trace(matriz_prob))
-    prob_local = float(np.tril(matriz_prob, -1).sum())
-    prob_visita = float(np.triu(matriz_prob, 1).sum())
-  else:
-    prob_empate = float(np.trace(matriz_prob))
 
   prob_under25 = sum(
       matriz_prob[i, j]
@@ -244,15 +238,16 @@ def calcular_dixon_coles(
   )
   prob_over25 = 1.0 - prob_under25
 
+  # Cálculo directo e incondicional de Ambos Anotan
   prob_btts_si = float(matriz_prob[1:, 1:].sum())
   prob_btts_no = 1.0 - prob_btts_si
 
   return prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si
 
 
-# --- INTERFAZ USUARIO (STREAMLIT) ---
+# INTERFAZ STREAMLIT
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader("Modelo Estadístico Ajustado (Dixon-Coles + Jerarquía + Outliers)")
+st.subheader("Modelo Corregido (Matching Flexible + Eliminación de Sesgos)")
 
 if st.sidebar.button("🔄 Recargar Datos del Excel"):
   st.cache_data.clear()
