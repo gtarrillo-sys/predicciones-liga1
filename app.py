@@ -76,12 +76,18 @@ with tab1:
 
   if f_val and f_val.lower() != "nan":
     fecha_limpia = f_val.split(" ")[0]
-    fecha_str = f"{d_val} {fecha_limpia}" if d_val and d_val.lower() != "nan" else fecha_limpia
+    fecha_str = (
+        f"{d_val} {fecha_limpia}"
+        if d_val and d_val.lower() != "nan"
+        else fecha_limpia
+    )
   else:
     fecha_str = "Fecha por confirmar"
 
   hora_str = h_val.split(" ")[-1][:5] if h_val and h_val.lower() != "nan" else ""
-  info_horario = f"📅 {fecha_str} - 🕒 {hora_str}" if hora_str else f"📅 {fecha_str}"
+  info_horario = (
+      f"📅 {fecha_str} - 🕒 {hora_str}" if hora_str else f"📅 {fecha_str}"
+  )
 
   alt_local = row_match.get("Altitud_Local", "0")
 
@@ -93,7 +99,7 @@ with tab1:
   st.write("---")
 
   # --- PROBABILIDADES 1X2 ---
-  # Reemplaza con los valores calculados por tu modelo
+  # Reemplazar por los valores calculados por tu modelo Poisson/Regresión
   prob_local = 0.157
   prob_empate = 0.196
   prob_visita = 0.646
@@ -118,10 +124,7 @@ with tab1:
     st.markdown(f"### {prob_visita*100:.1f}%")
     st.caption(f"↑ Cuota Justa: {cuota_visita}")
 
-  st.write("---")
-
-  # --- RECOMENDACIÓN / LA FIJA ---
-  st.subheader("💡 La Fija del Partido")
+  # --- RECOMENDACIÓN 1X2 / LA FIJA ---
   if prob_visita > 0.50:
     fija_txt = f"Gana {row_match['Visita']} (Directo)"
     confian_txt = "Alta"
@@ -135,9 +138,10 @@ with tab1:
     fija_txt = f"Local o Empate ({row_match['Local']})"
     confian_txt = "Media"
 
+  st.write(" ")
   col_fija1, col_fija2 = st.columns(2)
   with col_fija1:
-    st.info(f"**Pronóstico Sugerido:** {fija_txt}")
+    st.info(f"**Pronóstico Sugerido (1X2):** {fija_txt}")
   with col_fija2:
     st.success(f"**Nivel de Confianza:** {confian_txt}")
 
@@ -146,12 +150,42 @@ with tab1:
   # --- MERCADO DE GOLES Y AMBOS MARCAN ---
   col_goles, col_btts = st.columns(2)
 
-  # Reemplaza con tus probabilidades reales de Poisson
+  # Probabilidades reales obtenidas del modelo Poisson
   prob_over25 = 0.582
   prob_under25 = 1 - prob_over25
+
   prob_btts_si = 0.524
   prob_btts_no = 1 - prob_btts_si
 
+  # --- LÓGICA DE PRONÓSTICO: GOLES (OVER/UNDER) ---
+  if prob_over25 >= 0.60:
+    sug_goles = "Más de 2.5 Goles (Over)"
+    conf_goles = "Alta"
+  elif prob_over25 >= 0.52:
+    sug_goles = "Más de 1.5 / 2.5 Goles"
+    conf_goles = "Media"
+  elif prob_under25 >= 0.60:
+    sug_goles = "Menos de 2.5 Goles (Under)"
+    conf_goles = "Alta"
+  else:
+    sug_goles = "Menos de 2.5 / 3.5 Goles"
+    conf_goles = "Media"
+
+  # --- LÓGICA DE PRONÓSTICO: AMBOS MARCAN (BTTS) ---
+  if prob_btts_si >= 0.58:
+    sug_btts = "Ambos Equipos Anotan (Sí)"
+    conf_btts = "Alta"
+  elif prob_btts_si >= 0.50:
+    sug_btts = "Ambos Equipos Anotan (Sí)"
+    conf_btts = "Media"
+  elif prob_btts_no >= 0.58:
+    sug_btts = "Ambos Equipos NO Anotan (No)"
+    conf_btts = "Alta"
+  else:
+    sug_btts = "Ambos Equipos NO Anotan (No)"
+    conf_btts = "Media"
+
+  # RENDER SECCIÓN GOLES
   with col_goles:
     st.subheader("⚽ Mercado de Goles (Over / Under 2.5)")
     st.write(f"**Más de 2.5 Goles:** {prob_over25*100:.1f}%")
@@ -167,6 +201,10 @@ with tab1:
         f" {round(1/prob_under25, 2) if prob_under25 > 0 else 0}"
     )
 
+    st.info(f"**Pronóstico Sugerido:** {sug_goles}")
+    st.caption(f"🎯 Nivel de Confianza: **{conf_goles}**")
+
+  # RENDER SECCIÓN BTTS
   with col_btts:
     st.subheader("🔥 Ambos Equipos Anotan (BTTS)")
     st.write(f"**Sí Anotan Ambos:** {prob_btts_si*100:.1f}%")
@@ -182,6 +220,9 @@ with tab1:
         f"Cuota Justa No:"
         f" {round(1/prob_btts_no, 2) if prob_btts_no > 0 else 0}"
     )
+
+    st.info(f"**Pronóstico Sugerido:** {sug_btts}")
+    st.caption(f"🎯 Nivel de Confianza: **{conf_btts}**")
 
 
 # --- 4. PESTAÑA 2: RESUMEN DE LA JORNADA ---
