@@ -35,7 +35,12 @@ def normalizar_texto(texto):
   if not isinstance(texto, str):
     return ""
   txt = texto.lower().strip()
-  txt = re.sub(r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion)\b", "", txt)
+  # Elimina prefijos institucionales comunes sin alterar nombres como Juan Pablo II College
+  txt = re.sub(
+      r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion|asociación)\b",
+      "",
+      txt,
+  )
   return re.sub(r"\s+", " ", txt).strip()
 
 
@@ -75,30 +80,28 @@ def obtener_fuerza_ponderada(
     p_loc = df_resultados_hist[
         df_resultados_hist[c_loc].astype(str).apply(
             lambda x: norm_loc in normalizar_texto(x)
+            or normalizar_texto(x) in norm_loc
         )
     ].copy()
 
     p_vis = df_resultados_hist[
         df_resultados_hist[c_vis].astype(str).apply(
             lambda x: norm_vis in normalizar_texto(x)
+            or normalizar_texto(x) in norm_vis
         )
     ].copy()
 
-    # CONTROL DE ATÍPICOS: Acotar goles a máximo 3 por partido para no distorsionar la media
+    # CONTROL DE ATÍPICOS: Acotar goles a máximo 3.0 para evitar la distorsión del 5-1
     if not p_loc.empty:
-      goles_f_loc = p_loc[c_gloc].astype(float).clip(upper=3.0)
-      goles_c_loc = p_loc[c_gvis].astype(float).clip(upper=3.0)
-      att_loc = goles_f_loc.mean()
-      def_loc = goles_c_loc.mean()
+      att_loc = p_loc[c_gloc].astype(float).clip(upper=3.0).mean()
+      def_loc = p_loc[c_gvis].astype(float).clip(upper=3.0).mean()
 
     if not p_vis.empty:
-      goles_f_vis = p_vis[c_gvis].astype(float).clip(upper=3.0)
-      goles_c_vis = p_vis[c_gloc].astype(float).clip(upper=3.0)
-      att_vis = goles_f_vis.mean()
-      def_vis = goles_c_vis.mean()
+      att_vis = p_vis[c_gvis].astype(float).clip(upper=3.0).mean()
+      def_vis = p_vis[c_gloc].astype(float).clip(upper=3.0).mean()
 
-  # CORRECCIÓN DE JERARQUÍA POR TABLA ACUMULADA
-  pts_loc, pts_vis = 0, 0
+  # LECTURA DE PUNTOS EN LA TABLA ACUMULADA (FACTOR JERARQUÍA)
+  pts_loc, pts_vis = None, None
   if not df_tabla_acumulada.empty:
     col_eq = df_tabla_acumulada.columns[0]
     col_pts = next(
@@ -107,31 +110,31 @@ def obtener_fuerza_ponderada(
     )
 
     if col_pts:
-      r_loc = df_tabla_acumulada[
-          df_tabla_acumulada[col_eq].astype(str).apply(
-              lambda x: norm_loc in normalizar_texto(x)
-          )
-      ]
-      r_vis = df_tabla_acumulada[
-          df_tabla_acumulada[col_eq].astype(str).apply(
-              lambda x: norm_vis in normalizar_texto(x)
-          )
-      ]
+      for _, row in df_tabla_acumulada.iterrows():
+        nombre_tabla = normalizar_texto(str(row[col_eq]))
 
-      if not r_loc.empty:
-        pts_loc = float(r_loc[col_pts].values[0])
-      if not r_vis.empty:
-        pts_vis = float(r_vis[col_pts].values[0])
+        if norm_loc in nombre_tabla or nombre_tabla in norm_loc:
+          try:
+            pts_loc = float(row[col_pts])
+          except Exception:
+            pass
+        if norm_vis in nombre_tabla or nombre_tabla in norm_vis:
+          try:
+            pts_vis = float(row[col_pts])
+          except Exception:
+            pass
 
-  dif_pts = pts_vis - pts_loc
-  if dif_pts > 0:
-    factor_vis = 1.0 + (dif_pts * 0.008)
-    att_vis *= factor_vis
-    def_vis /= factor_vis
-  elif dif_pts < 0:
-    factor_loc = 1.0 + (abs(dif_pts) * 0.008)
-    att_loc *= factor_loc
-    def_loc /= factor_loc
+  # APLICAR CORRECCIÓN POR JERARQUÍA DE TABLA ACUMULADA
+  if pts_loc is not None and pts_vis is not None:
+    dif_pts = pts_vis - pts_loc
+    if dif_pts > 0:  # La visita supera en puntos al local
+      factor_vis = 1.0 + (dif_pts * 0.015)
+      att_vis *= factor_vis
+      def_vis /= factor_vis
+    elif dif_pts < 0:  # El local supera en puntos a la visita
+      factor_loc = 1.0 + (abs(dif_pts) * 0.015)
+      att_loc *= factor_loc
+      def_loc /= factor_loc
 
   return max(0.50, att_loc), max(0.50, def_loc), max(0.50, att_vis), max(0.50, def_vis)
 
@@ -247,9 +250,9 @@ def calcular_dixon_coles(
   return prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si
 
 
-# INTERFAZ
+# --- INTERFAZ USUARIO (STREAMLIT) ---
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader("Modelo Estadístico Corregido (Ajuste por Jerarquía y Outliers)")
+st.subheader("Modelo Estadístico Ajustado (Dixon-Coles + Jerarquía + Outliers)")
 
 if st.sidebar.button("🔄 Recargar Datos del Excel"):
   st.cache_data.clear()
