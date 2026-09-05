@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.stats import poisson
 import streamlit as st
 
-# Configuración inicial
+# Configuración de página
 st.set_page_config(
     page_title="Sistema de Predicciones Liga 1 2026",
     page_icon="⚽",
@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 
-# --- 1. CARGA DE DATOS ---
+# --- 1. CARGA Y LIMPIEZA DE DATOS ---
 @st.cache_data
 def cargar_datos():
   excel_path = "Liga1_2026.xlsx"
@@ -33,12 +33,126 @@ def cargar_datos():
 df_geo, df_resultados, df_proximos, df_clausura, df_acumulado = cargar_datos()
 
 
-# --- 2. MOTOR MATEMÁTICO: MODELO DIXON-COLES ---
-def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.13):
-  """Ajuste de correlación de Dixon-Coles para marcadores bajos (0-0, 1-0, 0-1, 1-1).
+# --- 2. FUNCIONES AUXILIARES PARA EXTRAER ESTADÍSTICAS REALES ---
+def obtener_fuerza_equipo(equipo_nombre, df_tabla, df_resultados_hist):
+  """Busca de forma robusta los goles a favor y en contra en las columnas del Excel."""
+  # Normalizar nombre
+  nombre_search = str(equipo_nombre).strip().lower()
 
-  rho: parámetro de dependencia (típicamente entre -0.10 y -0.15)
-  """
+  # 1. Intentar buscar en la Tabla de Posiciones por nombre de columna
+  col_equipo = None
+  for c in df_tabla.columns:
+    if any(k in c.lower() for k in ["equipo", "club", "local", "nombre"]):
+      col_equipo = c
+      break
+
+  if col_equipo is None:
+    col_equipo = df_tabla.columns[0]
+
+  row = df_tabla[
+      df_tabla[col_equipo].astype(str).str.lower().str.contains(nombre_search)
+  ]
+
+  if not row.empty:
+    # Buscar columnas de PJ, GF, GC de forma flexible
+    col_pj = next(
+        (c for c in df_tabla.columns if c.upper() in ["PJ", "J"]), None
+    )
+    col_gf = next(
+        (c for c in df_tabla.columns if c.upper() in ["GF", "GOL_F", "GOLES_F"]),
+        None,
+    )
+    col_gc = next(
+        (c for c in df_tabla.columns if c.upper() in ["GC", "GOL_C", "GOLES_C"]),
+        None,
+    )
+
+    try:
+      pj = float(row[col_pj].values[0]) if col_pj else 1.0
+      gf = float(row[col_gf].values[0]) if col_gf else 0.0
+      gc = float(row[col_gc].values[0]) if col_gc else 0.0
+
+      if pj > 0:
+        return (gf / pj), (gc / pj)
+    except Exception:
+      pass
+
+  # 2. Si no lo encuentra en la tabla, calcular directamente desde el historial de partidos jugados
+  cols_hist = [c.lower() for c in df_resultados_hist.columns]
+  c_loc = next(
+      (c for c in df_resultados_hist.columns if "local" in c.lower()), None
+  )
+  c_vis = next(
+      (c for c in df_resultados_hist.columns if "visita" in c.lower()), None
+  )
+  c_gloc = next(
+      (c for c in df_resultados_hist.columns if "goles_l" in c.lower() or "gl" in c.lower()),
+      None,
+  )
+  c_gvis = next(
+      (c for c in df_resultados_hist.columns if "goles_v" in c.lower() or "gv" in c.lower()),
+      None,
+  )
+
+  if c_loc and c_vis and c_gloc and c_gvis:
+    partidos_loc = df_resultados_hist[
+        df_resultados_hist[c_loc].astype(str).str.lower().str.contains(nombre_search)
+    ]
+    partidos_vis = df_resultados_hist[
+        df_resultados_hist[c_vis].astype(str).str.lower().str.contains(nombre_search)
+    ]
+
+    gf_tot = 0.0
+    gc_tot = 0.0
+    pj_tot = 0
+
+    for _, r in partidos_loc.iterrows():
+      try:
+        gf_tot += float(r[c_gloc])
+        gc_tot += float(r[c_gvis])
+        pj_tot += 1
+      except:
+        pass
+
+    for _, r in partidos_vis.iterrows():
+      try:
+        gf_tot += float(r[c_gvis])
+        gc_tot += float(r[c_gloc])
+        pj_tot += 1
+      except:
+        pass
+
+    if pj_tot > 0:
+      return (gf_tot / pj_tot), (gc_tot / pj_tot)
+
+  # Valores de resguardo si no hay datos registrados
+  return 1.35, 1.35
+
+
+def obtener_altitud(equipo_nombre, df_geo_info):
+  """Obtiene la altitud en msnm del equipo."""
+  nombre_search = str(equipo_nombre).strip().lower()
+  col_eq = df_geo_info.columns[0]
+
+  row = df_geo_info[
+      df_geo_info[col_eq].astype(str).str.lower().str.contains(nombre_search)
+  ]
+
+  if not row.empty:
+    col_alt = next(
+        (c for c in df_geo_info.columns if "altitud" in c.lower()), None
+    )
+    if col_alt:
+      try:
+        return float(row[col_alt].values[0])
+      except:
+        pass
+  return 0.0
+
+
+# --- 3. MOTOR MATEMÁTICO: MODELO DIXON-COLES ---
+def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.13):
+  """Función Tau de Dixon-Coles para corregir empates y marcadores bajos (0-0, 1-0, 0-1, 1-1)."""
   if x == 0 and y == 0:
     return 1.0 - (lambda_param * mu_param * rho)
   elif x == 0 and y == 1:
@@ -52,62 +166,45 @@ def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.13):
 
 
 def calcular_dixon_coles(
-    equipo_local, equipo_visita, df_tabla, df_geo_info, rho=-0.13
+    equipo_local,
+    equipo_visita,
+    df_tabla,
+    df_resultados_hist,
+    df_geo_info,
+    rho=-0.13,
 ):
-  """Calcula la matriz de probabilidades de marcadores ajustada por Dixon-Coles
-
-  considerando fuerza relativa y factor de altitud.
-  """
   promedio_goles_liga = 1.35
-  home_advantage = 1.22  # Parámetro gamma de localía base en Dixon-Coles
+  home_advantage = 1.18  # Ventaja de localía estándar
 
-  # Obtener fuerza de ataque y defensa desde la tabla
-  def get_fuerza(equipo):
-    row = df_tabla[
-        df_tabla.iloc[:, 0].astype(str).str.contains(equipo, case=False, na=False)
-    ]
-    if not row.empty:
-      try:
-        pj = float(row.iloc[0, 1]) if float(row.iloc[0, 1]) > 0 else 1
-        gf = float(row.iloc[0, 5])
-        gc = float(row.iloc[0, 6])
-        return (gf / pj), (gc / pj)
-      except:
-        return 1.3, 1.1
-    return 1.3, 1.1
+  # 1. Obtener rendimiento real
+  att_loc, def_loc = obtener_fuerza_equipo(
+      equipo_local, df_tabla, df_resultados_hist
+  )
+  att_vis, def_vis = obtener_fuerza_equipo(
+      equipo_visita, df_tabla, df_resultados_hist
+  )
 
-  att_loc, def_loc = get_fuerza(equipo_local)
-  att_vis, def_vis = get_fuerza(equipo_visita)
+  # 2. Factor Geográfico relativo (Diferencial de Altitud)
+  alt_loc = obtener_altitud(equipo_local, df_geo_info)
+  alt_vis = obtener_altitud(equipo_visita, df_geo_info)
 
-  # Factor de Altitud (Efecto geográfico sobre la tasa esperada)
-  row_geo = df_geo_info[
-      df_geo_info.iloc[:, 0]
-      .astype(str)
-      .str.contains(equipo_local, case=False, na=False)
-  ]
-  altitud = 0
-  if not row_geo.empty:
-    try:
-      altitud = float(row_geo.iloc[0].get("Altitud", 0))
-    except:
-      altitud = 0
+  # Si ambos son de altura (ej: Cajamarca 2750m vs Cienciano 3399m), la ventaja de altura es 0
+  dif_altitud = max(0.0, alt_loc - alt_vis)
+  factor_altitud = 1.0 + (dif_altitud / 10000.0)
 
-  factor_altitud = 1.0 + (altitud / 8500.0)
-
-  # Tasas de intensidad esperada Dixon-Coles (lambda y mu)
+  # 3. Tasas esperadas de gol (Lambda = Local, Mu = Visita)
   lambda_local = max(
       0.3,
-      att_loc
-      * (def_vis / promedio_goles_liga)
+      (att_loc * (def_vis / promedio_goles_liga))
       * home_advantage
       * factor_altitud,
   )
-  mu_visita = max(0.2, att_vis * (def_loc / promedio_goles_liga))
+  mu_visita = max(0.3, (att_vis * (def_loc / promedio_goles_liga)))
 
+  # 4. Construcción de la matriz de intensidades
   max_goles = 9
   matriz_prob = np.zeros((max_goles, max_goles))
 
-  # Construcción de la matriz con el ajuste tau
   for x in range(max_goles):
     for y in range(max_goles):
       p_x = poisson.pmf(x, lambda_local)
@@ -115,15 +212,17 @@ def calcular_dixon_coles(
       tau = tau_dixon_coles(x, y, lambda_local, mu_visita, rho)
       matriz_prob[x, y] = max(0.0, p_x * p_y * tau)
 
-  # Normalización de la matriz
-  matriz_prob /= matriz_prob.sum()
+  # Normalizar sumatoria de la matriz a 1.0
+  total_p = matriz_prob.sum()
+  if total_p > 0:
+    matriz_prob /= total_p
 
-  # 1X2
+  # Probabilidades 1X2
   prob_empate = float(np.trace(matriz_prob))
   prob_local = float(np.tril(matriz_prob, -1).sum())
   prob_visita = float(np.triu(matriz_prob, 1).sum())
 
-  # Over / Under 2.5
+  # Mercado de Goles
   prob_under25 = 0.0
   for i in range(max_goles):
     for j in range(max_goles):
@@ -142,7 +241,7 @@ def calcular_dixon_coles(
   return prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si
 
 
-# --- 3. ENCABEZADO Y PESTAÑAS ---
+# --- 4. ENCABEZADO Y PESTAÑAS ---
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
 st.subheader("Modelo Estadístico Dixon-Coles para la Liga 1 Peruana")
 
@@ -155,9 +254,9 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 
-# --- 4. PESTAÑA 1: PRONÓSTICO INDIVIDUAL ---
+# --- 5. PESTAÑA 1: PRONÓSTICO INDIVIDUAL ---
 with tab1:
-  st.header("🔍 Análisis Detallado (Ajuste Dixon-Coles)")
+  st.header("🔍 Análisis Detallado (Modelo Dixon-Coles)")
 
   col_jornada, col_partido = st.columns(2)
 
@@ -184,9 +283,15 @@ with tab1:
   equipo_local = str(row_match["Local"]).strip()
   equipo_visita = str(row_match["Visita"]).strip()
 
-  # CÁLCULO DIXON-COLES EN TIEMPO REAL
+  # CÁLCULO DIXON-COLES CON DATOS DEL EXCEL
   prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si = (
-      calcular_dixon_coles(equipo_local, equipo_visita, df_clausura, df_geo)
+      calcular_dixon_coles(
+          equipo_local,
+          equipo_visita,
+          df_clausura,
+          df_resultados,
+          df_geo,
+      )
   )
 
   prob_under25 = 1.0 - prob_over25
@@ -240,17 +345,17 @@ with tab1:
     st.markdown(f"### {prob_visita*100:.1f}%")
     st.caption(f"↑ Cuota Justa: {cuota_visita}")
 
-  # --- LA FIJA ---
+  # --- PRONÓSTICO SUGERIDO (LA FIJA) ---
   if prob_local > 0.50:
     fija_txt = f"Gana {equipo_local} (Directo)"
     confian_txt = "Alta"
   elif prob_visita > 0.50:
     fija_txt = f"Gana {equipo_visita} (Directo)"
     confian_txt = "Alta"
-  elif (prob_local + prob_empate) > 0.68:
+  elif (prob_local + prob_empate) > 0.65:
     fija_txt = f"Local o Empate ({equipo_local})"
     confian_txt = "Media-Alta"
-  elif (prob_visita + prob_empate) > 0.68:
+  elif (prob_visita + prob_empate) > 0.65:
     fija_txt = f"Empate o Visita ({equipo_visita})"
     confian_txt = "Media-Alta"
   else:
@@ -330,7 +435,7 @@ with tab1:
     st.caption(f"🎯 Nivel de Confianza: **{conf_btts}**")
 
 
-# --- 5. OTRAS PESTAÑAS ---
+# --- 6. PESTAÑAS RESTANTES ---
 with tab2:
   st.header("🧢 Resumen de la Jornada")
   jornada_resumen = st.selectbox(
