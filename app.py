@@ -198,4 +198,4 @@ with tab4:
 with tab5:
   st.header("🗺️ Información Geográfica y Altitudes")
   st.dataframe(df_geo, use_container_width=True)
-  st.error(f"Error en la aplicación: {e}")
+  
