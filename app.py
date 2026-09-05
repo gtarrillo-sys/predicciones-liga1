@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-# Configuración inicial de la página
+# Configuración inicial
 st.set_page_config(
     page_title="Sistema de Predicciones Liga 1 2026",
     page_icon="⚽",
@@ -9,38 +9,31 @@ st.set_page_config(
 )
 
 
-# --- 1. CARGA DE DATOS DESDE EXCEL ---
+# --- 1. CARGA DE DATOS ---
 @st.cache_data
 def cargar_datos():
   excel_path = "Liga1_2026.xlsx"
 
-  # Carga de hojas
   df_geo = pd.read_excel(excel_path, sheet_name="Data_Geografica")
   df_resultados = pd.read_excel(excel_path, sheet_name="Resultados_Clausura")
-
-  # Importante: dtype=str fuerza la lectura exacta del texto en las celdas
   df_proximos = pd.read_excel(
       excel_path, sheet_name="Partidos_Fecha", dtype=str
   )
-
   df_clausura = pd.read_excel(excel_path, sheet_name="Tabla_Clausura")
   df_acumulado = pd.read_excel(excel_path, sheet_name="Tabla_Acumulada")
 
-  # Limpiar espacios en blanco en los nombres de las columnas
   for df in [df_geo, df_resultados, df_proximos, df_clausura, df_acumulado]:
     df.columns = df.columns.astype(str).str.strip()
 
   return df_geo, df_resultados, df_proximos, df_clausura, df_acumulado
 
 
-# Cargar los datasets
 df_geo, df_resultados, df_proximos, df_clausura, df_acumulado = cargar_datos()
 
 # --- 2. ENCABEZADO ---
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
 st.subheader("Modelo Estadístico para la Liga 1 Peruana")
 
-# Pestañas principales
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🎯 Pronóstico Individual por Partido",
     "🧢 Resumen de la Jornada",
@@ -50,7 +43,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 
-# --- 3. PESTAÑA 1: PRONÓSTICO INDIVIDUAL POR PARTIDO ---
+# --- 3. PESTAÑA 1: PRONÓSTICO INDIVIDUAL ---
 with tab1:
   st.header("🔍 Análisis Detallado")
 
@@ -59,15 +52,10 @@ with tab1:
   with col_jornada:
     lista_jornadas = df_proximos["Jornada"].dropna().unique().tolist()
     jornada_sel = st.selectbox(
-        "📅 Selecciona la Fecha:",
-        lista_jornadas,
-        key="sb_jornada_tab1",
+        "📅 Selecciona la Fecha:", lista_jornadas, key="sb_jornada_tab1"
     )
 
-  # Filtrar los partidos correspondientes a la jornada seleccionada
   df_jornada = df_proximos[df_proximos["Jornada"] == jornada_sel].copy()
-
-  # Crear una columna de etiqueta para el selector (Local vs Visita)
   df_jornada["Partido_Label"] = (
       df_jornada["Local"].astype(str) + " vs " + df_jornada["Visita"].astype(str)
   )
@@ -79,51 +67,33 @@ with tab1:
         key="sb_partido_tab1",
     )
 
-  # Fila seleccionada
-  row_match = df_jornada[
-      df_jornada["Partido_Label"] == partido_sel
-  ].iloc[0]
+  row_match = df_jornada[df_jornada["Partido_Label"] == partido_sel].iloc[0]
 
-  # --- PROCESAMIENTO Y DEPURACIÓN DE FECHA / DIA / HORA ---
+  # --- FORMATO DE FECHA / DIA / HORA ---
   f_val = str(row_match.get("Fecha", "")).strip()
   d_val = str(row_match.get("Dia", "")).strip()
   h_val = str(row_match.get("Hora", "")).strip()
 
-  # Formatear la Fecha uniendo las columnas 'Dia' y 'Fecha'
   if f_val and f_val.lower() != "nan":
-    fecha_limpia = f_val.split(" ")[0]  # Limpia tiempo si viniera adjunto
-    if d_val and d_val.lower() != "nan":
-      fecha_str = f"{d_val} {fecha_limpia}"
-    else:
-      fecha_str = fecha_limpia
+    fecha_limpia = f_val.split(" ")[0]
+    fecha_str = f"{d_val} {fecha_limpia}" if d_val and d_val.lower() != "nan" else fecha_limpia
   else:
     fecha_str = "Fecha por confirmar"
 
-  # Formatear la Hora
-  if h_val and h_val.lower() != "nan":
-    hora_str = h_val.split(" ")[-1][:5]
-  else:
-    hora_str = ""
+  hora_str = h_val.split(" ")[-1][:5] if h_val and h_val.lower() != "nan" else ""
+  info_horario = f"📅 {fecha_str} - 🕒 {hora_str}" if hora_str else f"📅 {fecha_str}"
 
-  info_horario = (
-      f"📅 {fecha_str} - 🕒 {hora_str}" if hora_str else f"📅 {fecha_str}"
-  )
-
-  # Datos del estadio y altitud del Local
-  estadio_str = str(row_match.get("Estadio", "")).strip()
   alt_local = row_match.get("Altitud_Local", "0")
 
-  # Cabecera descriptiva del partido seleccionado
   st.subheader(
-      f"🏟️ {partido_sel} | {str(row_match.get('Ciudad', ''))} ({alt_local}"
-      " msnm)"
+      f"🏟️ {partido_sel} | {str(row_match.get('Ciudad', ''))} ({alt_local} msnm)"
   )
   st.caption(info_horario)
 
   st.write("---")
 
-  # --- SIMULACIÓN / MUESTRA DE PROBABILIDADES ---
-  # Nota: Reemplazar estas variables por la salida real de tu modelo Poisson / Regresión
+  # --- PROBABILIDADES 1X2 ---
+  # Reemplaza con los valores calculados por tu modelo
   prob_local = 0.157
   prob_empate = 0.196
   prob_visita = 0.646
@@ -133,7 +103,6 @@ with tab1:
   cuota_visita = round(1 / prob_visita, 2) if prob_visita > 0 else 0
 
   c1, c2, c3 = st.columns(3)
-
   with c1:
     st.write(f"**Gana {row_match['Local']}**")
     st.markdown(f"### {prob_local*100:.1f}%")
@@ -149,18 +118,80 @@ with tab1:
     st.markdown(f"### {prob_visita*100:.1f}%")
     st.caption(f"↑ Cuota Justa: {cuota_visita}")
 
+  st.write("---")
+
+  # --- RECOMENDACIÓN / LA FIJA ---
+  st.subheader("💡 La Fija del Partido")
+  if prob_visita > 0.50:
+    fija_txt = f"Gana {row_match['Visita']} (Directo)"
+    confian_txt = "Alta"
+  elif prob_local > 0.50:
+    fija_txt = f"Gana {row_match['Local']} (Directo)"
+    confian_txt = "Alta"
+  elif (prob_visita + prob_empate) > 0.70:
+    fija_txt = f"Empate o Visita ({row_match['Visita']})"
+    confian_txt = "Media-Alta"
+  else:
+    fija_txt = f"Local o Empate ({row_match['Local']})"
+    confian_txt = "Media"
+
+  col_fija1, col_fija2 = st.columns(2)
+  with col_fija1:
+    st.info(f"**Pronóstico Sugerido:** {fija_txt}")
+  with col_fija2:
+    st.success(f"**Nivel de Confianza:** {confian_txt}")
+
+  st.write("---")
+
+  # --- MERCADO DE GOLES Y AMBOS MARCAN ---
+  col_goles, col_btts = st.columns(2)
+
+  # Reemplaza con tus probabilidades reales de Poisson
+  prob_over25 = 0.582
+  prob_under25 = 1 - prob_over25
+  prob_btts_si = 0.524
+  prob_btts_no = 1 - prob_btts_si
+
+  with col_goles:
+    st.subheader("⚽ Mercado de Goles (Over / Under 2.5)")
+    st.write(f"**Más de 2.5 Goles:** {prob_over25*100:.1f}%")
+    st.progress(prob_over25)
+    st.caption(
+        f"Cuota Justa Over: {round(1/prob_over25, 2) if prob_over25 > 0 else 0}"
+    )
+
+    st.write(f"**Menos de 2.5 Goles:** {prob_under25*100:.1f}%")
+    st.progress(prob_under25)
+    st.caption(
+        f"Cuota Justa Under:"
+        f" {round(1/prob_under25, 2) if prob_under25 > 0 else 0}"
+    )
+
+  with col_btts:
+    st.subheader("🔥 Ambos Equipos Anotan (BTTS)")
+    st.write(f"**Sí Anotan Ambos:** {prob_btts_si*100:.1f}%")
+    st.progress(prob_btts_si)
+    st.caption(
+        f"Cuota Justa Sí:"
+        f" {round(1/prob_btts_si, 2) if prob_btts_si > 0 else 0}"
+    )
+
+    st.write(f"**No Anotan Ambos:** {prob_btts_no*100:.1f}%")
+    st.progress(prob_btts_no)
+    st.caption(
+        f"Cuota Justa No:"
+        f" {round(1/prob_btts_no, 2) if prob_btts_no > 0 else 0}"
+    )
+
 
 # --- 4. PESTAÑA 2: RESUMEN DE LA JORNADA ---
 with tab2:
   st.header("🧢 Resumen de la Jornada")
   jornada_resumen = st.selectbox(
-      "Selecciona la Jornada a revisar:",
-      lista_jornadas,
-      key="sb_jornada_tab2",
+      "Selecciona la Jornada a revisar:", lista_jornadas, key="sb_jornada_tab2"
   )
   df_res = df_proximos[df_proximos["Jornada"] == jornada_resumen].copy()
 
-  # Formatear la columna combinada de Fecha/Día para la tabla global
   df_res["Fecha_Display"] = df_res.apply(
       lambda r: f"{r['Dia']} {str(r['Fecha']).split(' ')[0]}"
       if pd.notna(r.get("Dia"))
@@ -182,20 +213,15 @@ with tab2:
   st.dataframe(df_res[cols_presentes], use_container_width=True)
 
 
-# --- 5. PESTAÑA 3: TABLA CLAUSURA ---
+# --- 5. OTRAS PESTAÑAS ---
 with tab3:
   st.header("🏆 Tabla de Posiciones - Clausura")
   st.dataframe(df_clausura, use_container_width=True)
 
-
-# --- 6. PESTAÑA 4: TABLA ACUMULADA ---
 with tab4:
   st.header("📊 Tabla Acumulada")
   st.dataframe(df_acumulado, use_container_width=True)
 
-
-# --- 7. PESTAÑA 5: DATA GEOGRÁFICA ---
 with tab5:
   st.header("🗺️ Información Geográfica y Altitudes")
   st.dataframe(df_geo, use_container_width=True)
-  
