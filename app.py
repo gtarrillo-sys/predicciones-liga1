@@ -5,18 +5,36 @@ import streamlit as st
 
 # Configuración de página
 st.set_page_config(
-    page_title="Predicciones Liga 1 2026", page_icon="⚽", layout="wide"
+    page_title="Predicciones Liga 1 2026 - Dixon-Coles",
+    page_icon="⚽",
+    layout="wide",
 )
 
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader("Modelo Estadístico de Poisson + Factor Geográfico")
+st.subheader(
+    "Modelo Estadístico de Dixon-Coles + Ajuste Geográfico + Recencia"
+)
 
 
-# Función de Poisson manual
+# 1. Función Poisson base
 def pmf_poisson(k, lambd):
   if lambd <= 0:
     return 1.0 if k == 0 else 0.0
   return (lambd**k * math.exp(-lambd)) / math.factorial(k)
+
+
+# 2. Factor Tau de Dixon-Coles para Marcadores Bajos (BTTS y 1X2)
+def tau_dixon_coles(x, y, lambda_l, lambda_v, rho=-0.12):
+  if x == 0 and y == 0:
+    return 1.0 - (lambda_l * lambda_v * rho)
+  elif x == 1 and y == 0:
+    return 1.0 + (lambda_v * rho)
+  elif x == 0 and y == 1:
+    return 1.0 + (lambda_l * rho)
+  elif x == 1 and y == 1:
+    return 1.0 - rho
+  else:
+    return 1.0
 
 
 # Carga de datos desde Excel
@@ -31,12 +49,18 @@ def cargar_datos():
   return df_geo, df_resultados, df_proximos, df_clausura, df_acumulado
 
 
+# Botón lateral para refrescar cache cuando subas nuevos resultados
+with st.sidebar:
+  st.header("⚙️ Opciones")
+  if st.button("🔄 Recargar Datos del Excel"):
+    st.cache_data.clear()
+    st.rerun()
+
 try:
   df_geo, df_resultados, df_proximos, df_clausura, df_acumulado = (
       cargar_datos()
   )
 
-  # Pestañas principales
   tab1, tab2, tab3, tab4, tab5 = st.tabs([
       "🎯 Pronóstico Individual por Partido",
       "🔮 Resumen de la Jornada",
@@ -45,15 +69,29 @@ try:
       "🗺️ Data Geográfica",
   ])
 
-  # --- CÁLCULO GENERAL DE FUERZAS DE ATAQUE / DEFENSA ---
-  prom_xg_loc = df_resultados["xG_Local"].mean()
-  prom_xg_vis = df_resultados["xG_Visita"].mean()
+  # --- CÁLCULO DE FUERZAS CON ENFOQUE EN PARTIDOS RECIENTES ---
+  # Se priorizan las últimas 5 jornadas jugadas para capturar el momentum/racha actual
+  CANT_PARTIDOS_RECIENTES = 45  # Aprox últimas 5 fechas de la liga
+  df_reciente = (
+      df_resultados.tail(CANT_PARTIDOS_RECIENTES)
+      if len(df_resultados) > CANT_PARTIDOS_RECIENTES
+      else df_resultados
+  )
+
+  prom_xg_loc = df_reciente["xG_Local"].mean()
+  prom_xg_vis = df_reciente["xG_Visita"].mean()
   equipos = pd.unique(df_resultados[["Local", "Visita"]].values.ravel())
 
   fuerzas = {}
   for eq in equipos:
-    df_l = df_resultados[df_resultados["Local"] == eq]
-    df_v = df_resultados[df_resultados["Visita"] == eq]
+    df_l = df_reciente[df_reciente["Local"] == eq]
+    df_v = df_reciente[df_reciente["Visita"] == eq]
+
+    # Si hay pocos partidos en el filtro reciente, respaldar con el promedio general
+    if len(df_l) < 2:
+      df_l = df_resultados[df_resultados["Local"] == eq]
+    if len(df_v) < 2:
+      df_v = df_resultados[df_resultados["Visita"] == eq]
 
     att_l = (
         df_l["xG_Local"].mean() / prom_xg_loc if len(df_l) > 0 else 1.0
@@ -75,18 +113,16 @@ try:
         "Def_Vis": def_v,
     }
 
-  # --- TAB 1: PRONÓSTICO INDIVIDUAL Y SELECCIÓN POR FECHA ---
+  # --- TAB 1: PRONÓSTICO INDIVIDUAL (DIXON-COLES + RECENCIA) ---
   with tab1:
-    st.header("🔍 Análisis Detallado y Selección de Partido")
+    st.header("🔍 Análisis Detallado (Dixon-Coles + Formato Reciente)")
 
-    # 1. Filtro de Fecha / Jornada
     jornadas_disponibles = list(df_proximos["Jornada"].unique())
     col_j1, col_j2 = st.columns([1, 2])
 
     with col_j1:
       jornada_sel = st.selectbox("📅 Selecciona la Fecha:", jornadas_disponibles)
 
-    # Filtrar partidos de esa Fecha
     df_partidos_jornada = df_proximos[df_proximos["Jornada"] == jornada_sel]
     partidos_lista = (
         df_partidos_jornada["Local"] + " vs " + df_partidos_jornada["Visita"]
@@ -95,7 +131,6 @@ try:
     with col_j2:
       partido_sel = st.selectbox("⚔️ Selecciona el Partido:", partidos_lista)
 
-    # Extraer datos del partido seleccionado
     row_match = df_partidos_jornada[
         (df_partidos_jornada["Local"] + " vs " + df_partidos_jornada["Visita"])
         == partido_sel
@@ -104,7 +139,6 @@ try:
     loc, vis = row_match["Local"], row_match["Visita"]
     alt_l, alt_v = row_match["Altitud_Local"], row_match["Altitud_Visita"]
 
-    # Cálculo Poisson para este encuentro
     f_l = fuerzas.get(
         loc, {"Att_Loc": 1.0, "Def_Loc": 1.0, "Att_Vis": 1.0, "Def_Vis": 1.0}
     )
@@ -115,39 +149,38 @@ try:
     lambda_l = f_l["Att_Loc"] * f_v["Def_Vis"] * prom_xg_loc
     lambda_v = f_v["Att_Vis"] * f_l["Def_Loc"] * prom_xg_vis
 
-    # Factor de Altitud
+    # Ajuste de Altitud
     if alt_l >= 2000 and alt_v < 500:
-      lambda_l *= 1.18
-      lambda_v *= 0.82
+      lambda_l *= 1.15
+      lambda_v *= 0.85
 
-    # Generar Matriz de Probabilidades (0 a 6 goles por lado)
+    # Suelo ofensivo para evitar subestimar al visitante en BTTS
+    lambda_v = max(lambda_v, 0.92)
+    lambda_l = max(lambda_l, 1.05)
+
+    # MATRIZ DIXON-COLES
     matriz = np.zeros((7, 7))
     for i in range(7):
       for j in range(7):
-        matriz[i, j] = pmf_poisson(i, lambda_l) * pmf_poisson(j, lambda_v)
+        p_base = pmf_poisson(i, lambda_l) * pmf_poisson(j, lambda_v)
+        tau = tau_dixon_coles(i, j, lambda_l, lambda_v, rho=-0.12)
+        matriz[i, j] = p_base * tau
 
-    # Probabilidades de Resultado (1X2)
+    matriz = matriz / np.sum(matriz)  # Normalización
+
     prob_l = np.sum(np.tril(matriz, -1))
     prob_e = np.sum(np.diag(matriz))
     prob_v = np.sum(np.triu(matriz, 1))
 
-    # Probabilidad Ambos Anotan (BTTS)
     prob_btts_si = np.sum(matriz[1:, 1:])
     prob_btts_no = 1.0 - prob_btts_si
 
-    # Probabilidades de Líneas de Goles
-    total_goles = np.zeros((7, 7))
-    for i in range(7):
-      for j in range(7):
-        total_goles[i, j] = i + j
-
+    total_goles = np.indices((7, 7))[0] + np.indices((7, 7))[1]
     prob_over_15 = np.sum(matriz[total_goles > 1.5])
     prob_over_25 = np.sum(matriz[total_goles > 2.5])
     prob_over_35 = np.sum(matriz[total_goles > 3.5])
 
     st.markdown("---")
-
-    # Muestra de Indicadores Principales
     st.markdown(
         f"### 🏟️ **{loc}** vs **{vis}** | *{row_match['Ciudad']} ({alt_l} msnm)*"
     )
@@ -171,9 +204,7 @@ try:
 
     st.markdown("---")
 
-    # Sección Mercado de Goles y Ambos Anotan
     col_g1, col_g2 = st.columns(2)
-
     with col_g1:
       st.subheader("⚽ Marcador de Goles (Over / Under)")
       st.write(
@@ -189,7 +220,6 @@ try:
           f" Menos: **{(1-prob_over_35)*100:.1f}%**"
       )
 
-      # Pronóstico recomendado
       rec_goles = (
           "Más de 2.5 Goles"
           if prob_over_25 > 0.55
@@ -204,12 +234,11 @@ try:
 
       rec_btts = (
           "Ambos Anotan: SÍ"
-          if prob_btts_si > 0.55
-          else ("Ambos Anotan: NO" if prob_btts_no > 0.55 else "Neutro / Evaluativo")
+          if prob_btts_si > 0.52
+          else ("Ambos Anotan: NO" if prob_btts_no > 0.52 else "Neutro / Evaluativo")
       )
       st.info(f"💡 **Sugerencia BTTS:** {rec_btts}")
 
-    # Top 3 Marcadores Exactos Más Probables
     st.markdown("---")
     st.subheader("🎯 Marcadores Exactos Más Probables")
 
@@ -231,9 +260,9 @@ try:
         f"**3° Opción:** {marcadores[2][0]} ({marcadores[2][1]*100:.1f}%)"
     )
 
-  # --- TAB 2: RESUMEN DE LA JORNADA COMPLETA ---
+  # --- TAB 2: RESUMEN DE LA JORNADA ---
   with tab2:
-    st.header("📊 Resumen Consolidado de la Fecha")
+    st.header("📊 Resumen Consolidado de la Fecha (Dixon-Coles)")
     jornada_tabla = st.selectbox(
         "Filtrar Fecha para Ver Matriz:",
         jornadas_disponibles,
@@ -256,14 +285,21 @@ try:
 
       ll = fl["Att_Loc"] * fv["Def_Vis"] * prom_xg_loc
       lv = fv["Att_Vis"] * fl["Def_Loc"] * prom_xg_vis
+
       if a_l >= 2000 and a_v < 500:
-        ll *= 1.18
-        lv *= 0.82
+        ll *= 1.15
+        lv *= 0.85
+
+      lv = max(lv, 0.92)
+      ll = max(ll, 1.05)
 
       mat = np.zeros((7, 7))
       for i in range(7):
         for j in range(7):
-          mat[i, j] = pmf_poisson(i, ll) * pmf_poisson(j, lv)
+          pb = pmf_poisson(i, ll) * pmf_poisson(j, lv)
+          mat[i, j] = pb * tau_dixon_coles(i, j, ll, lv, -0.12)
+
+      mat = mat / np.sum(mat)
 
       pl = np.sum(np.tril(mat, -1))
       pe = np.sum(np.diag(mat))
@@ -285,17 +321,15 @@ try:
 
     st.dataframe(pd.DataFrame(resumen_list), use_container_width=True)
 
-  # --- TAB 3: TABLA CLAUSURA ---
+  # --- TAB 3, 4 Y 5 ---
   with tab3:
     st.header("Tabla de Posiciones - Torneo Clausura")
     st.dataframe(df_clausura, use_container_width=True)
 
-  # --- TAB 4: TABLA ACUMULADA ---
   with tab4:
     st.header("Tabla Acumulada 2026")
     st.dataframe(df_acumulado, use_container_width=True)
 
-  # --- TAB 5: DATA GEOGRÁFICA ---
   with tab5:
     st.header("Información Geográfica de Clubes")
     st.dataframe(df_geo, use_container_width=True)
