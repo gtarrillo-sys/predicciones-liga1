@@ -1,4 +1,6 @@
+import numpy as np
 import pandas as pd
+from scipy.stats import poisson
 import streamlit as st
 
 # Configuración inicial
@@ -30,9 +32,119 @@ def cargar_datos():
 
 df_geo, df_resultados, df_proximos, df_clausura, df_acumulado = cargar_datos()
 
-# --- 2. ENCABEZADO ---
+
+# --- 2. MOTOR MATEMÁTICO: MODELO DIXON-COLES ---
+def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.13):
+  """Ajuste de correlación de Dixon-Coles para marcadores bajos (0-0, 1-0, 0-1, 1-1).
+
+  rho: parámetro de dependencia (típicamente entre -0.10 y -0.15)
+  """
+  if x == 0 and y == 0:
+    return 1.0 - (lambda_param * mu_param * rho)
+  elif x == 0 and y == 1:
+    return 1.0 + (lambda_param * rho)
+  elif x == 1 and y == 0:
+    return 1.0 + (mu_param * rho)
+  elif x == 1 and y == 1:
+    return 1.0 - rho
+  else:
+    return 1.0
+
+
+def calcular_dixon_coles(
+    equipo_local, equipo_visita, df_tabla, df_geo_info, rho=-0.13
+):
+  """Calcula la matriz de probabilidades de marcadores ajustada por Dixon-Coles
+
+  considerando fuerza relativa y factor de altitud.
+  """
+  promedio_goles_liga = 1.35
+  home_advantage = 1.22  # Parámetro gamma de localía base en Dixon-Coles
+
+  # Obtener fuerza de ataque y defensa desde la tabla
+  def get_fuerza(equipo):
+    row = df_tabla[
+        df_tabla.iloc[:, 0].astype(str).str.contains(equipo, case=False, na=False)
+    ]
+    if not row.empty:
+      try:
+        pj = float(row.iloc[0, 1]) if float(row.iloc[0, 1]) > 0 else 1
+        gf = float(row.iloc[0, 5])
+        gc = float(row.iloc[0, 6])
+        return (gf / pj), (gc / pj)
+      except:
+        return 1.3, 1.1
+    return 1.3, 1.1
+
+  att_loc, def_loc = get_fuerza(equipo_local)
+  att_vis, def_vis = get_fuerza(equipo_visita)
+
+  # Factor de Altitud (Efecto geográfico sobre la tasa esperada)
+  row_geo = df_geo_info[
+      df_geo_info.iloc[:, 0]
+      .astype(str)
+      .str.contains(equipo_local, case=False, na=False)
+  ]
+  altitud = 0
+  if not row_geo.empty:
+    try:
+      altitud = float(row_geo.iloc[0].get("Altitud", 0))
+    except:
+      altitud = 0
+
+  factor_altitud = 1.0 + (altitud / 8500.0)
+
+  # Tasas de intensidad esperada Dixon-Coles (lambda y mu)
+  lambda_local = max(
+      0.3,
+      att_loc
+      * (def_vis / promedio_goles_liga)
+      * home_advantage
+      * factor_altitud,
+  )
+  mu_visita = max(0.2, att_vis * (def_loc / promedio_goles_liga))
+
+  max_goles = 9
+  matriz_prob = np.zeros((max_goles, max_goles))
+
+  # Construcción de la matriz con el ajuste tau
+  for x in range(max_goles):
+    for y in range(max_goles):
+      p_x = poisson.pmf(x, lambda_local)
+      p_y = poisson.pmf(y, mu_visita)
+      tau = tau_dixon_coles(x, y, lambda_local, mu_visita, rho)
+      matriz_prob[x, y] = max(0.0, p_x * p_y * tau)
+
+  # Normalización de la matriz
+  matriz_prob /= matriz_prob.sum()
+
+  # 1X2
+  prob_empate = float(np.trace(matriz_prob))
+  prob_local = float(np.tril(matriz_prob, -1).sum())
+  prob_visita = float(np.triu(matriz_prob, 1).sum())
+
+  # Over / Under 2.5
+  prob_under25 = 0.0
+  for i in range(max_goles):
+    for j in range(max_goles):
+      if i + j < 2.5:
+        prob_under25 += matriz_prob[i, j]
+  prob_over25 = 1.0 - prob_under25
+
+  # Ambos Anotan (BTTS)
+  prob_no_btts = (
+      matriz_prob[0, :].sum()
+      + matriz_prob[:, 0].sum()
+      - matriz_prob[0, 0]
+  )
+  prob_btts_si = 1.0 - prob_no_btts
+
+  return prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si
+
+
+# --- 3. ENCABEZADO Y PESTAÑAS ---
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader("Modelo Estadístico para la Liga 1 Peruana")
+st.subheader("Modelo Estadístico Dixon-Coles para la Liga 1 Peruana")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🎯 Pronóstico Individual por Partido",
@@ -43,9 +155,9 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 
-# --- 3. PESTAÑA 1: PRONÓSTICO INDIVIDUAL ---
+# --- 4. PESTAÑA 1: PRONÓSTICO INDIVIDUAL ---
 with tab1:
-  st.header("🔍 Análisis Detallado")
+  st.header("🔍 Análisis Detallado (Ajuste Dixon-Coles)")
 
   col_jornada, col_partido = st.columns(2)
 
@@ -69,21 +181,30 @@ with tab1:
 
   row_match = df_jornada[df_jornada["Partido_Label"] == partido_sel].iloc[0]
 
-  # --- FORMATO DE FECHA / DIA / HORA ---
+  equipo_local = str(row_match["Local"]).strip()
+  equipo_visita = str(row_match["Visita"]).strip()
+
+  # CÁLCULO DIXON-COLES EN TIEMPO REAL
+  prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si = (
+      calcular_dixon_coles(equipo_local, equipo_visita, df_clausura, df_geo)
+  )
+
+  prob_under25 = 1.0 - prob_over25
+  prob_btts_no = 1.0 - prob_btts_si
+
+  # --- FORMATO FECHA Y LUGAR ---
   f_val = str(row_match.get("Fecha", "")).strip()
   d_val = str(row_match.get("Dia", "")).strip()
   h_val = str(row_match.get("Hora", "")).strip()
 
-  if f_val and f_val.lower() != "nan":
-    fecha_limpia = f_val.split(" ")[0]
-    fecha_str = (
-        f"{d_val} {fecha_limpia}"
-        if d_val and d_val.lower() != "nan"
-        else fecha_limpia
-    )
-  else:
-    fecha_str = "Fecha por confirmar"
-
+  fecha_limpia = (
+      f_val.split(" ")[0] if f_val and f_val.lower() != "nan" else "Por confirmar"
+  )
+  fecha_str = (
+      f"{d_val} {fecha_limpia}"
+      if d_val and d_val.lower() != "nan"
+      else fecha_limpia
+  )
   hora_str = h_val.split(" ")[-1][:5] if h_val and h_val.lower() != "nan" else ""
   info_horario = (
       f"📅 {fecha_str} - 🕒 {hora_str}" if hora_str else f"📅 {fecha_str}"
@@ -98,19 +219,14 @@ with tab1:
 
   st.write("---")
 
-  # --- PROBABILIDADES 1X2 ---
-  # Reemplazar por los valores calculados por tu modelo Poisson/Regresión
-  prob_local = 0.157
-  prob_empate = 0.196
-  prob_visita = 0.646
-
+  # --- VISUALIZACIÓN PROBABILIDADES 1X2 ---
   cuota_local = round(1 / prob_local, 2) if prob_local > 0 else 0
   cuota_empate = round(1 / prob_empate, 2) if prob_empate > 0 else 0
   cuota_visita = round(1 / prob_visita, 2) if prob_visita > 0 else 0
 
   c1, c2, c3 = st.columns(3)
   with c1:
-    st.write(f"**Gana {row_match['Local']}**")
+    st.write(f"**Gana {equipo_local}**")
     st.markdown(f"### {prob_local*100:.1f}%")
     st.caption(f"↑ Cuota Justa: {cuota_local}")
 
@@ -120,22 +236,25 @@ with tab1:
     st.caption(f"↑ Cuota Justa: {cuota_empate}")
 
   with c3:
-    st.write(f"**Gana {row_match['Visita']}**")
+    st.write(f"**Gana {equipo_visita}**")
     st.markdown(f"### {prob_visita*100:.1f}%")
     st.caption(f"↑ Cuota Justa: {cuota_visita}")
 
-  # --- RECOMENDACIÓN 1X2 / LA FIJA ---
-  if prob_visita > 0.50:
-    fija_txt = f"Gana {row_match['Visita']} (Directo)"
+  # --- LA FIJA ---
+  if prob_local > 0.50:
+    fija_txt = f"Gana {equipo_local} (Directo)"
     confian_txt = "Alta"
-  elif prob_local > 0.50:
-    fija_txt = f"Gana {row_match['Local']} (Directo)"
+  elif prob_visita > 0.50:
+    fija_txt = f"Gana {equipo_visita} (Directo)"
     confian_txt = "Alta"
-  elif (prob_visita + prob_empate) > 0.70:
-    fija_txt = f"Empate o Visita ({row_match['Visita']})"
+  elif (prob_local + prob_empate) > 0.68:
+    fija_txt = f"Local o Empate ({equipo_local})"
+    confian_txt = "Media-Alta"
+  elif (prob_visita + prob_empate) > 0.68:
+    fija_txt = f"Empate o Visita ({equipo_visita})"
     confian_txt = "Media-Alta"
   else:
-    fija_txt = f"Local o Empate ({row_match['Local']})"
+    fija_txt = "Empate o Doble Opción Local"
     confian_txt = "Media"
 
   st.write(" ")
@@ -147,45 +266,32 @@ with tab1:
 
   st.write("---")
 
-  # --- MERCADO DE GOLES Y AMBOS MARCAN ---
+  # --- RECOMENDACIONES DE GOLES Y BTTS ---
+  if prob_over25 >= 0.58:
+    sug_goles = "Más de 2.5 Goles (+2.5)"
+    conf_goles = "Alta"
+  elif prob_over25 >= 0.50:
+    sug_goles = "Más de 1.5 Goles (+1.5)"
+    conf_goles = "Media"
+  elif prob_under25 >= 0.58:
+    sug_goles = "Menos de 2.5 Goles (-2.5)"
+    conf_goles = "Alta"
+  else:
+    sug_goles = "Menos de 3.5 Goles (-3.5)"
+    conf_goles = "Media"
+
+  if prob_btts_si >= 0.56:
+    sug_btts = "Ambos Equipos Anotan (Sí)"
+    conf_btts = "Alta"
+  elif prob_btts_si >= 0.48:
+    sug_btts = "Ambos Equipos Anotan (Sí)"
+    conf_btts = "Media"
+  else:
+    sug_btts = "Ambos Equipos NO Anotan (No)"
+    conf_btts = "Media"
+
   col_goles, col_btts = st.columns(2)
 
-  # Probabilidades reales obtenidas del modelo Poisson
-  prob_over25 = 0.582
-  prob_under25 = 1 - prob_over25
-
-  prob_btts_si = 0.524
-  prob_btts_no = 1 - prob_btts_si
-
-  # --- LÓGICA DE PRONÓSTICO: GOLES (OVER/UNDER) ---
-  if prob_over25 >= 0.60:
-    sug_goles = "Más de 2.5 Goles (Over)"
-    conf_goles = "Alta"
-  elif prob_over25 >= 0.52:
-    sug_goles = "Más de 1.5 / 2.5 Goles"
-    conf_goles = "Media"
-  elif prob_under25 >= 0.60:
-    sug_goles = "Menos de 2.5 Goles (Under)"
-    conf_goles = "Alta"
-  else:
-    sug_goles = "Menos de 2.5 / 3.5 Goles"
-    conf_goles = "Media"
-
-  # --- LÓGICA DE PRONÓSTICO: AMBOS MARCAN (BTTS) ---
-  if prob_btts_si >= 0.58:
-    sug_btts = "Ambos Equipos Anotan (Sí)"
-    conf_btts = "Alta"
-  elif prob_btts_si >= 0.50:
-    sug_btts = "Ambos Equipos Anotan (Sí)"
-    conf_btts = "Media"
-  elif prob_btts_no >= 0.58:
-    sug_btts = "Ambos Equipos NO Anotan (No)"
-    conf_btts = "Alta"
-  else:
-    sug_btts = "Ambos Equipos NO Anotan (No)"
-    conf_btts = "Media"
-
-  # RENDER SECCIÓN GOLES
   with col_goles:
     st.subheader("⚽ Mercado de Goles (Over / Under 2.5)")
     st.write(f"**Más de 2.5 Goles:** {prob_over25*100:.1f}%")
@@ -204,7 +310,6 @@ with tab1:
     st.info(f"**Pronóstico Sugerido:** {sug_goles}")
     st.caption(f"🎯 Nivel de Confianza: **{conf_goles}**")
 
-  # RENDER SECCIÓN BTTS
   with col_btts:
     st.subheader("🔥 Ambos Equipos Anotan (BTTS)")
     st.write(f"**Sí Anotan Ambos:** {prob_btts_si*100:.1f}%")
@@ -225,7 +330,7 @@ with tab1:
     st.caption(f"🎯 Nivel de Confianza: **{conf_btts}**")
 
 
-# --- 4. PESTAÑA 2: RESUMEN DE LA JORNADA ---
+# --- 5. OTRAS PESTAÑAS ---
 with tab2:
   st.header("🧢 Resumen de la Jornada")
   jornada_resumen = st.selectbox(
@@ -253,8 +358,6 @@ with tab2:
 
   st.dataframe(df_res[cols_presentes], use_container_width=True)
 
-
-# --- 5. OTRAS PESTAÑAS ---
 with tab3:
   st.header("🏆 Tabla de Posiciones - Clausura")
   st.dataframe(df_clausura, use_container_width=True)
