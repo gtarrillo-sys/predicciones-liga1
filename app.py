@@ -4,7 +4,6 @@ import pandas as pd
 from scipy.stats import poisson
 import streamlit as st
 
-# Configuración inicial
 st.set_page_config(
     page_title="Sistema de Predicciones Liga 1 2026",
     page_icon="⚽",
@@ -12,11 +11,9 @@ st.set_page_config(
 )
 
 
-# --- 1. CARGA DE DATOS ---
 @st.cache_data(ttl=60)
 def cargar_datos():
   excel_path = "Liga1_2026.xlsx"
-
   df_geo = pd.read_excel(excel_path, sheet_name="Data_Geografica")
   df_resultados = pd.read_excel(excel_path, sheet_name="Resultados_Clausura")
   df_proximos = pd.read_excel(
@@ -34,7 +31,6 @@ def cargar_datos():
 df_geo, df_resultados, df_proximos, df_clausura, df_acumulado = cargar_datos()
 
 
-# --- 2. FUNCIONES DE BÚSQUEDA PONDERADA ---
 def normalizar_texto(texto):
   if not isinstance(texto, str):
     return ""
@@ -44,12 +40,8 @@ def normalizar_texto(texto):
 
 
 def obtener_fuerza_ponderada(
-    equipo_local, equipo_visita, df_resultados_hist, df_tabla
+    equipo_local, equipo_visita, df_resultados_hist, df_tabla_acumulada
 ):
-  """Calcula la fuerza ofensiva y defensiva combinando el rendimiento global
-
-  y la condición de local/visita para evitar distorsiones por muestras pequeñas.
-  """
   norm_loc = normalizar_texto(equipo_local)
   norm_vis = normalizar_texto(equipo_visita)
 
@@ -80,61 +72,68 @@ def obtener_fuerza_ponderada(
   att_vis, def_vis = 1.05, 1.35
 
   if c_loc and c_vis and c_gloc and c_gvis:
-    # Historial TOTAL del Local (Local + Visita)
-    mask_tot_loc = df_resultados_hist[c_loc].astype(str).apply(
-        lambda x: norm_loc in normalizar_texto(x) or normalizar_texto(x) in norm_loc
-    ) | df_resultados_hist[c_vis].astype(str).apply(
-        lambda x: norm_loc in normalizar_texto(x) or normalizar_texto(x) in norm_loc
+    p_loc = df_resultados_hist[
+        df_resultados_hist[c_loc].astype(str).apply(
+            lambda x: norm_loc in normalizar_texto(x)
+        )
+    ].copy()
+
+    p_vis = df_resultados_hist[
+        df_resultados_hist[c_vis].astype(str).apply(
+            lambda x: norm_vis in normalizar_texto(x)
+        )
+    ].copy()
+
+    # CONTROL DE ATÍPICOS: Acotar goles a máximo 3 por partido para no distorsionar la media
+    if not p_loc.empty:
+      goles_f_loc = p_loc[c_gloc].astype(float).clip(upper=3.0)
+      goles_c_loc = p_loc[c_gvis].astype(float).clip(upper=3.0)
+      att_loc = goles_f_loc.mean()
+      def_loc = goles_c_loc.mean()
+
+    if not p_vis.empty:
+      goles_f_vis = p_vis[c_gvis].astype(float).clip(upper=3.0)
+      goles_c_vis = p_vis[c_gloc].astype(float).clip(upper=3.0)
+      att_vis = goles_f_vis.mean()
+      def_vis = goles_c_vis.mean()
+
+  # CORRECCIÓN DE JERARQUÍA POR TABLA ACUMULADA
+  pts_loc, pts_vis = 0, 0
+  if not df_tabla_acumulada.empty:
+    col_eq = df_tabla_acumulada.columns[0]
+    col_pts = next(
+        (c for c in df_tabla_acumulada.columns if "pt" in c.lower() or "puntos" in c.lower()),
+        None,
     )
-    p_tot_loc = df_resultados_hist[mask_tot_loc]
 
-    # Historial TOTAL del Visita (Local + Visita)
-    mask_tot_vis = df_resultados_hist[c_loc].astype(str).apply(
-        lambda x: norm_vis in normalizar_texto(x) or normalizar_texto(x) in norm_vis
-    ) | df_resultados_hist[c_vis].astype(str).apply(
-        lambda x: norm_vis in normalizar_texto(x) or normalizar_texto(x) in norm_vis
-    )
-    p_tot_vis = df_resultados_hist[mask_tot_vis]
+    if col_pts:
+      r_loc = df_tabla_acumulada[
+          df_tabla_acumulada[col_eq].astype(str).apply(
+              lambda x: norm_loc in normalizar_texto(x)
+          )
+      ]
+      r_vis = df_tabla_acumulada[
+          df_tabla_acumulada[col_eq].astype(str).apply(
+              lambda x: norm_vis in normalizar_texto(x)
+          )
+      ]
 
-    # Cálculo Ponderado para el Local (70% rendimiento de local + 30% rendimiento global)
-    mask_loc_home = df_resultados_hist[c_loc].astype(str).apply(
-        lambda x: norm_loc in normalizar_texto(x) or normalizar_texto(x) in norm_loc
-    )
-    p_loc_home = df_resultados_hist[mask_loc_home]
+      if not r_loc.empty:
+        pts_loc = float(r_loc[col_pts].values[0])
+      if not r_vis.empty:
+        pts_vis = float(r_vis[col_pts].values[0])
 
-    if not p_loc_home.empty and not p_tot_loc.empty:
-      gf_home = p_loc_home[c_gloc].astype(float).mean()
-      gc_home = p_loc_home[c_gvis].astype(float).mean()
+  dif_pts = pts_vis - pts_loc
+  if dif_pts > 0:
+    factor_vis = 1.0 + (dif_pts * 0.008)
+    att_vis *= factor_vis
+    def_vis /= factor_vis
+  elif dif_pts < 0:
+    factor_loc = 1.0 + (abs(dif_pts) * 0.008)
+    att_loc *= factor_loc
+    def_loc /= factor_loc
 
-      # Promedio global
-      gf_glob = (
-          p_tot_loc[c_gloc].astype(float).sum()
-          + p_tot_loc[c_gvis].astype(float).sum()
-      ) / (len(p_tot_loc) * 2)
-      gc_glob = gf_glob  # Aproximación simétrica
-
-      att_loc = (gf_home * 0.70) + (gf_glob * 0.30)
-      def_loc = (gc_home * 0.70) + (gc_glob * 0.30)
-
-    # Cálculo Ponderado para la Visita (70% rendimiento de visita + 30% rendimiento global)
-    mask_vis_away = df_resultados_hist[c_vis].astype(str).apply(
-        lambda x: norm_vis in normalizar_texto(x) or normalizar_texto(x) in norm_vis
-    )
-    p_vis_away = df_resultados_hist[mask_vis_away]
-
-    if not p_vis_away.empty and not p_tot_vis.empty:
-      gf_away = p_vis_away[c_gvis].astype(float).mean()
-      gc_away = p_vis_away[c_gloc].astype(float).mean()
-
-      gf_glob = (
-          p_tot_vis[c_gloc].astype(float).sum()
-          + p_tot_vis[c_gvis].astype(float).sum()
-      ) / (len(p_tot_vis) * 2)
-
-      att_vis = (gf_away * 0.70) + (gf_glob * 0.30)
-      def_vis = (gc_away * 0.70) + (gf_glob * 0.30)
-
-  return max(0.60, att_loc), max(0.60, def_loc), max(0.60, att_vis), max(0.60, def_vis)
+  return max(0.50, att_loc), max(0.50, def_loc), max(0.50, att_vis), max(0.50, def_vis)
 
 
 def obtener_altitud(equipo_nombre, df_geo_info):
@@ -157,7 +156,6 @@ def obtener_altitud(equipo_nombre, df_geo_info):
   return 0.0
 
 
-# --- 3. MOTOR DIXON-COLES ---
 def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.13):
   if x == 0 and y == 0:
     return 1.0 - (lambda_param * mu_param * rho)
@@ -191,15 +189,12 @@ def calcular_dixon_coles(
   dif_altitud = max(0.0, alt_loc - alt_vis)
   factor_altitud = 1.0 + (dif_altitud / 10000.0)
 
-  home_advantage = 1.10
+  home_advantage = 1.08
 
-  lambda_local = max(
-      0.50,
-      (att_loc * (def_vis / promedio_goles_liga))
-      * home_advantage
-      * factor_altitud,
-  )
-  mu_visita = max(0.50, (att_vis * (def_loc / promedio_goles_liga)))
+  lambda_local = (
+      att_loc * (def_vis / promedio_goles_liga)
+  ) * home_advantage * factor_altitud
+  mu_visita = att_vis * (def_loc / promedio_goles_liga)
 
   max_goles = 9
   matriz_prob = np.zeros((max_goles, max_goles))
@@ -215,9 +210,28 @@ def calcular_dixon_coles(
   if total_p > 0:
     matriz_prob /= total_p
 
-  prob_empate = float(np.trace(matriz_prob))
   prob_local = float(np.tril(matriz_prob, -1).sum())
   prob_visita = float(np.triu(matriz_prob, 1).sum())
+
+  if prob_visita < 0.10:
+    mu_visita = max(0.20, mu_visita * (prob_visita / 0.10))
+    matriz_prob = np.zeros((max_goles, max_goles))
+    for x in range(max_goles):
+      for y in range(max_goles):
+        p_x = poisson.pmf(x, lambda_local)
+        p_y = poisson.pmf(y, mu_visita)
+        tau = tau_dixon_coles(x, y, lambda_local, mu_visita, rho)
+        matriz_prob[x, y] = max(0.0, p_x * p_y * tau)
+
+    total_p = matriz_prob.sum()
+    if total_p > 0:
+      matriz_prob /= total_p
+
+    prob_empate = float(np.trace(matriz_prob))
+    prob_local = float(np.tril(matriz_prob, -1).sum())
+    prob_visita = float(np.triu(matriz_prob, 1).sum())
+  else:
+    prob_empate = float(np.trace(matriz_prob))
 
   prob_under25 = sum(
       matriz_prob[i, j]
@@ -227,19 +241,15 @@ def calcular_dixon_coles(
   )
   prob_over25 = 1.0 - prob_under25
 
-  prob_no_btts = (
-      matriz_prob[0, :].sum()
-      + matriz_prob[:, 0].sum()
-      - matriz_prob[0, 0]
-  )
-  prob_btts_si = 1.0 - prob_no_btts
+  prob_btts_si = float(matriz_prob[1:, 1:].sum())
+  prob_btts_no = 1.0 - prob_btts_si
 
   return prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si
 
 
-# --- 4. INTERFAZ Y VISTAS ---
+# INTERFAZ
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader("Modelo Estadístico Dixon-Coles Ponderado")
+st.subheader("Modelo Estadístico Corregido (Ajuste por Jerarquía y Outliers)")
 
 if st.sidebar.button("🔄 Recargar Datos del Excel"):
   st.cache_data.clear()
@@ -254,7 +264,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 with tab1:
-  st.header("🔍 Análisis Detallado (Modelo Ponderado)")
+  st.header("🔍 Análisis Detallado")
 
   col_jornada, col_partido = st.columns(2)
 
@@ -285,7 +295,7 @@ with tab1:
       calcular_dixon_coles(
           equipo_local,
           equipo_visita,
-          df_clausura,
+          df_acumulado,
           df_resultados,
           df_geo,
       )
@@ -365,7 +375,6 @@ with tab1:
 
   st.write("---")
 
-  # RECOMENDACIONES
   if prob_over25 >= 0.55:
     sug_goles = "Más de 2.5 Goles (+2.5)"
     conf_goles = "Alta" if prob_over25 >= 0.60 else "Media"
