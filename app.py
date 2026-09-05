@@ -4,7 +4,7 @@ import pandas as pd
 from scipy.stats import poisson
 import streamlit as st
 
-# Configuración inicial de la página
+# Configuración inicial
 st.set_page_config(
     page_title="Sistema de Predicciones Liga 1 2026",
     page_icon="⚽",
@@ -12,8 +12,8 @@ st.set_page_config(
 )
 
 
-# --- 1. CARGA DE DATOS (CON LIMPIEZA DE CACHÉ) ---
-@st.cache_data(ttl=60)  # Recarga automática cada 60 segundos si el Excel cambia
+# --- 1. CARGA DE DATOS ---
+@st.cache_data(ttl=60)
 def cargar_datos():
   excel_path = "Liga1_2026.xlsx"
 
@@ -34,9 +34,8 @@ def cargar_datos():
 df_geo, df_resultados, df_proximos, df_clausura, df_acumulado = cargar_datos()
 
 
-# --- 2. FUNCIONES AUXILIARES DE LIMPIEZA Y BÚSQUEDA ---
+# --- 2. FUNCIONES DE BÚSQUEDA PONDERADA ---
 def normalizar_texto(texto):
-  """Estandariza los nombres de los equipos para garantizar coincidencias exactas."""
   if not isinstance(texto, str):
     return ""
   txt = texto.lower().strip()
@@ -44,12 +43,12 @@ def normalizar_texto(texto):
   return re.sub(r"\s+", " ", txt).strip()
 
 
-def obtener_fuerza_especifica(
+def obtener_fuerza_ponderada(
     equipo_local, equipo_visita, df_resultados_hist, df_tabla
 ):
-  """Calcula de forma precisa el ataque y defensa del LOCAL de Local
+  """Calcula la fuerza ofensiva y defensiva combinando el rendimiento global
 
-  y del VISITANTE de Visita usando el historial real de partidos.
+  y la condición de local/visita para evitar distorsiones por muestras pequeñas.
   """
   norm_loc = normalizar_texto(equipo_local)
   norm_vis = normalizar_texto(equipo_visita)
@@ -77,55 +76,75 @@ def obtener_fuerza_especifica(
       None,
   )
 
-  # Promedios de referencia de la liga peruana
-  att_loc, def_loc = 1.30, 1.10
-  att_vis, def_vis = 0.90, 1.45
+  att_loc, def_loc = 1.35, 1.10
+  att_vis, def_vis = 1.05, 1.35
 
-  if c_loc and c_gloc and c_gvis:
-    mask_loc = df_resultados_hist[c_loc].astype(str).apply(
+  if c_loc and c_vis and c_gloc and c_gvis:
+    # Historial TOTAL del Local (Local + Visita)
+    mask_tot_loc = df_resultados_hist[c_loc].astype(str).apply(
+        lambda x: norm_loc in normalizar_texto(x) or normalizar_texto(x) in norm_loc
+    ) | df_resultados_hist[c_vis].astype(str).apply(
         lambda x: norm_loc in normalizar_texto(x) or normalizar_texto(x) in norm_loc
     )
-    p_local = df_resultados_hist[mask_loc]
-    if not p_local.empty:
-      try:
-        gf = p_local[c_gloc].astype(float).sum()
-        gc = p_local[c_gvis].astype(float).sum()
-        pj = len(p_local)
-        if pj > 0:
-          att_loc = gf / pj
-          def_loc = gc / pj
-      except Exception:
-        pass
+    p_tot_loc = df_resultados_hist[mask_tot_loc]
 
-  if c_vis and c_gloc and c_gvis:
-    mask_vis = df_resultados_hist[c_vis].astype(str).apply(
+    # Historial TOTAL del Visita (Local + Visita)
+    mask_tot_vis = df_resultados_hist[c_loc].astype(str).apply(
+        lambda x: norm_vis in normalizar_texto(x) or normalizar_texto(x) in norm_vis
+    ) | df_resultados_hist[c_vis].astype(str).apply(
         lambda x: norm_vis in normalizar_texto(x) or normalizar_texto(x) in norm_vis
     )
-    p_visita = df_resultados_hist[mask_vis]
-    if not p_visita.empty:
-      try:
-        gf = p_visita[c_gvis].astype(float).sum()
-        gc = p_visita[c_gloc].astype(float).sum()
-        pj = len(p_visita)
-        if pj > 0:
-          att_vis = gf / pj
-          def_vis = gc / pj
-      except Exception:
-        pass
+    p_tot_vis = df_resultados_hist[mask_tot_vis]
 
-  return att_loc, def_loc, att_vis, def_vis
+    # Cálculo Ponderado para el Local (70% rendimiento de local + 30% rendimiento global)
+    mask_loc_home = df_resultados_hist[c_loc].astype(str).apply(
+        lambda x: norm_loc in normalizar_texto(x) or normalizar_texto(x) in norm_loc
+    )
+    p_loc_home = df_resultados_hist[mask_loc_home]
+
+    if not p_loc_home.empty and not p_tot_loc.empty:
+      gf_home = p_loc_home[c_gloc].astype(float).mean()
+      gc_home = p_loc_home[c_gvis].astype(float).mean()
+
+      # Promedio global
+      gf_glob = (
+          p_tot_loc[c_gloc].astype(float).sum()
+          + p_tot_loc[c_gvis].astype(float).sum()
+      ) / (len(p_tot_loc) * 2)
+      gc_glob = gf_glob  # Aproximación simétrica
+
+      att_loc = (gf_home * 0.70) + (gf_glob * 0.30)
+      def_loc = (gc_home * 0.70) + (gc_glob * 0.30)
+
+    # Cálculo Ponderado para la Visita (70% rendimiento de visita + 30% rendimiento global)
+    mask_vis_away = df_resultados_hist[c_vis].astype(str).apply(
+        lambda x: norm_vis in normalizar_texto(x) or normalizar_texto(x) in norm_vis
+    )
+    p_vis_away = df_resultados_hist[mask_vis_away]
+
+    if not p_vis_away.empty and not p_tot_vis.empty:
+      gf_away = p_vis_away[c_gvis].astype(float).mean()
+      gc_away = p_vis_away[c_gloc].astype(float).mean()
+
+      gf_glob = (
+          p_tot_vis[c_gloc].astype(float).sum()
+          + p_tot_vis[c_gvis].astype(float).sum()
+      ) / (len(p_tot_vis) * 2)
+
+      att_vis = (gf_away * 0.70) + (gf_glob * 0.30)
+      def_vis = (gc_away * 0.70) + (gf_glob * 0.30)
+
+  return max(0.60, att_loc), max(0.60, def_loc), max(0.60, att_vis), max(0.60, def_vis)
 
 
 def obtener_altitud(equipo_nombre, df_geo_info):
   norm_search = normalizar_texto(equipo_nombre)
   col_eq = df_geo_info.columns[0]
-
   mask = df_geo_info[col_eq].astype(str).apply(
       lambda x: norm_search in normalizar_texto(x)
       or normalizar_texto(x) in norm_search
   )
   row = df_geo_info[mask]
-
   if not row.empty:
     col_alt = next(
         (c for c in df_geo_info.columns if "altitud" in c.lower()), None
@@ -138,7 +157,7 @@ def obtener_altitud(equipo_nombre, df_geo_info):
   return 0.0
 
 
-# --- 3. MOTOR MATEMÁTICO DIXON-COLES ---
+# --- 3. MOTOR DIXON-COLES ---
 def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.13):
   if x == 0 and y == 0:
     return 1.0 - (lambda_param * mu_param * rho)
@@ -162,7 +181,7 @@ def calcular_dixon_coles(
 ):
   promedio_goles_liga = 1.30
 
-  att_loc, def_loc, att_vis, def_vis = obtener_fuerza_especifica(
+  att_loc, def_loc, att_vis, def_vis = obtener_fuerza_ponderada(
       equipo_local, equipo_visita, df_resultados_hist, df_tabla
   )
 
@@ -172,16 +191,15 @@ def calcular_dixon_coles(
   dif_altitud = max(0.0, alt_loc - alt_vis)
   factor_altitud = 1.0 + (dif_altitud / 10000.0)
 
-  # Ventaja de localía moderada
-  home_advantage = 1.12 if def_loc <= att_loc else 1.02
+  home_advantage = 1.10
 
   lambda_local = max(
-      0.40,
+      0.50,
       (att_loc * (def_vis / promedio_goles_liga))
       * home_advantage
       * factor_altitud,
   )
-  mu_visita = max(0.40, (att_vis * (def_loc / promedio_goles_liga)))
+  mu_visita = max(0.50, (att_vis * (def_loc / promedio_goles_liga)))
 
   max_goles = 9
   matriz_prob = np.zeros((max_goles, max_goles))
@@ -197,12 +215,10 @@ def calcular_dixon_coles(
   if total_p > 0:
     matriz_prob /= total_p
 
-  # 1X2
   prob_empate = float(np.trace(matriz_prob))
   prob_local = float(np.tril(matriz_prob, -1).sum())
   prob_visita = float(np.triu(matriz_prob, 1).sum())
 
-  # Mercado Over / Under 2.5
   prob_under25 = sum(
       matriz_prob[i, j]
       for i in range(max_goles)
@@ -211,7 +227,6 @@ def calcular_dixon_coles(
   )
   prob_over25 = 1.0 - prob_under25
 
-  # Mercado BTTS (Ambos Anotan)
   prob_no_btts = (
       matriz_prob[0, :].sum()
       + matriz_prob[:, 0].sum()
@@ -222,11 +237,10 @@ def calcular_dixon_coles(
   return prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si
 
 
-# --- 4. ENCABEZADO Y PESTAÑAS ---
+# --- 4. INTERFAZ Y VISTAS ---
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader("Modelo Estadístico Dixon-Coles para la Liga 1 Peruana")
+st.subheader("Modelo Estadístico Dixon-Coles Ponderado")
 
-# Botón en la barra lateral para forzar recarga del Excel si se hicieron cambios
 if st.sidebar.button("🔄 Recargar Datos del Excel"):
   st.cache_data.clear()
   st.rerun()
@@ -239,10 +253,8 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🗺️ Data Geográfica",
 ])
 
-
-# --- 5. PESTAÑA 1: PRONÓSTICO INDIVIDUAL ---
 with tab1:
-  st.header("🔍 Análisis Detallado (Modelo Dixon-Coles)")
+  st.header("🔍 Análisis Detallado (Modelo Ponderado)")
 
   col_jornada, col_partido = st.columns(2)
 
@@ -269,7 +281,6 @@ with tab1:
   equipo_local = str(row_match["Local"]).strip()
   equipo_visita = str(row_match["Visita"]).strip()
 
-  # CÁLCULO DIXON-COLES
   prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si = (
       calcular_dixon_coles(
           equipo_local,
@@ -283,7 +294,6 @@ with tab1:
   prob_under25 = 1.0 - prob_over25
   prob_btts_no = 1.0 - prob_btts_si
 
-  # FORMATO FECHA Y LUGAR
   f_val = str(row_match.get("Fecha", "")).strip()
   d_val = str(row_match.get("Dia", "")).strip()
   h_val = str(row_match.get("Hora", "")).strip()
@@ -310,7 +320,6 @@ with tab1:
 
   st.write("---")
 
-  # VISUALIZACIÓN PROBABILIDADES 1X2 Y CUOTAS JUSTAS
   cuota_local = round(1 / prob_local, 2) if prob_local > 0 else 0
   cuota_empate = round(1 / prob_empate, 2) if prob_empate > 0 else 0
   cuota_visita = round(1 / prob_visita, 2) if prob_visita > 0 else 0
@@ -331,7 +340,6 @@ with tab1:
     st.markdown(f"### {prob_visita*100:.1f}%")
     st.caption(f"↑ Cuota Justa: {cuota_visita}")
 
-  # PRONÓSTICO SUGERIDO (LA FIJA)
   if prob_local > 0.50:
     fija_txt = f"Gana {equipo_local} (Directo)"
     confian_txt = "Alta"
@@ -357,21 +365,17 @@ with tab1:
 
   st.write("---")
 
-  # RECOMENDACIONES DE GOLES Y BTTS
-  if prob_over25 >= 0.58:
+  # RECOMENDACIONES
+  if prob_over25 >= 0.55:
     sug_goles = "Más de 2.5 Goles (+2.5)"
-    conf_goles = "Alta"
-  elif prob_over25 >= 0.50:
+    conf_goles = "Alta" if prob_over25 >= 0.60 else "Media"
+  elif prob_over25 >= 0.48:
     sug_goles = "Más de 1.5 Goles (+1.5)"
     conf_goles = "Media"
-  elif prob_under25 >= 0.58:
-    sug_goles = "Menos de 2.5 Goles (-2.5)"
-    conf_goles = "Alta"
   else:
-    sug_goles = "Menos de 3.5 Goles (-3.5)"
-    conf_goles = "Media"
+    sug_goles = "Menos de 2.5 Goles (-2.5)"
+    conf_goles = "Alta" if prob_under25 >= 0.58 else "Media"
 
-  # Lógica de sugerencia de BTTS
   if prob_btts_si > prob_btts_no:
     sug_btts = "Ambos Equipos Anotan (Sí)"
     conf_btts = "Alta" if prob_btts_si >= 0.58 else "Media"
@@ -418,22 +422,18 @@ with tab1:
     st.info(f"**Pronóstico Sugerido:** {sug_btts}")
     st.caption(f"🎯 Nivel de Confianza: **{conf_btts}**")
 
-
-# --- 6. PESTAÑAS SECUNDARIAS ---
 with tab2:
   st.header("🧢 Resumen de la Jornada")
   jornada_resumen = st.selectbox(
       "Selecciona la Jornada a revisar:", lista_jornadas, key="sb_jornada_tab2"
   )
   df_res = df_proximos[df_proximos["Jornada"] == jornada_resumen].copy()
-
   df_res["Fecha_Display"] = df_res.apply(
       lambda r: f"{r['Dia']} {str(r['Fecha']).split(' ')[0]}"
       if pd.notna(r.get("Dia"))
       else str(r.get("Fecha")),
       axis=1,
   )
-
   columnas_mostrar = [
       "Fecha_Display",
       "Hora",
@@ -444,7 +444,6 @@ with tab2:
       "Altitud_Local",
   ]
   cols_presentes = [c for c in columnas_mostrar if c in df_res.columns]
-
   st.dataframe(df_res[cols_presentes], use_container_width=True)
 
 with tab3:
