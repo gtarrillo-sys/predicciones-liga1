@@ -35,7 +35,6 @@ def normalizar_texto(texto):
   if not isinstance(texto, str):
     return ""
   txt = texto.lower().strip()
-  # Elimina palabras estructurales pero preserva nombres clave (ej: "juan pablo", "alianza lima")
   txt = re.sub(
       r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion|asociación|college)\b",
       "",
@@ -45,7 +44,6 @@ def normalizar_texto(texto):
 
 
 def coincidencia_equipo(nombre1, nombre2):
-  """Compara dos nombres de equipos mediante palabras clave principales."""
   n1 = normalizar_texto(nombre1)
   n2 = normalizar_texto(nombre2)
   if not n1 or not n2:
@@ -85,8 +83,9 @@ def obtener_fuerza_ponderada(
       None,
   )
 
-  att_loc, def_loc = 1.35, 1.10
-  att_vis, def_vis = 1.05, 1.35
+  # Medias de liga por defecto (prior bayesiano)
+  att_loc, def_loc = 1.30, 1.10
+  att_vis, def_vis = 1.15, 1.20
 
   if c_loc and c_vis and c_gloc and c_gvis:
     p_loc = df_resultados_hist[
@@ -101,16 +100,20 @@ def obtener_fuerza_ponderada(
         .apply(lambda x: coincidencia_equipo(equipo_visita, x))
     ].copy()
 
-    # Recorte de outliers: Máximo 3.0 goles por partido para acotar el 5-1
+    # Promedio suavizado con prior (evita distorsión por pocos partidos)
     if not p_loc.empty:
-      att_loc = p_loc[c_gloc].astype(float).clip(upper=3.0).mean()
-      def_loc = p_loc[c_gvis].astype(float).clip(upper=3.0).mean()
+      g_favor = p_loc[c_gloc].astype(float).clip(upper=2.5).mean()
+      g_contra = p_loc[c_gvis].astype(float).clip(upper=2.5).mean()
+      att_loc = (g_favor + 1.30) / 2.0
+      def_loc = (g_contra + 1.10) / 2.0
 
     if not p_vis.empty:
-      att_vis = p_vis[c_gvis].astype(float).clip(upper=3.0).mean()
-      def_vis = p_vis[c_gloc].astype(float).clip(upper=3.0).mean()
+      g_favor = p_vis[c_gvis].astype(float).clip(upper=2.5).mean()
+      g_contra = p_vis[c_gloc].astype(float).clip(upper=2.5).mean()
+      att_vis = (g_favor + 1.15) / 2.0
+      def_vis = (g_contra + 1.20) / 2.0
 
-  # BÚSQUEDA GARANTIZADA EN TABLA ACUMULADA
+  # BÚSQUEDA Y AJUSTE POR TABLA ACUMULADA
   pts_loc, pts_vis = None, None
   if not df_tabla_acumulada.empty:
     col_eq = df_tabla_acumulada.columns[0]
@@ -139,19 +142,25 @@ def obtener_fuerza_ponderada(
           except Exception:
             pass
 
-  # PONDERACIÓN DE JERARQUÍA SEGÚN LA ACUMULADA
+  # REGLA DE JERARQUÍA REALISTA
   if pts_loc is not None and pts_vis is not None:
     dif_pts = pts_vis - pts_loc
-    if dif_pts > 0:  # La visita es superior en la tabla general
-      factor_vis = 1.0 + (dif_pts * 0.02)  # 2% de impulso por punto de diferencia
-      att_vis *= factor_vis
-      def_vis /= factor_vis
-    elif dif_pts < 0:  # El local es superior
-      factor_loc = 1.0 + (abs(dif_pts) * 0.02)
+    # Ajuste exponencial moderado según la diferencia en la Acumulada
+    factor_ajuste = 1.0 + (dif_pts * 0.035)
+
+    if dif_pts > 0:  # Visitante superior en rendimiento anual
+      att_vis *= factor_ajuste
+      def_vis /= factor_ajuste
+      att_loc /= factor_ajuste
+      def_loc *= factor_ajuste
+    elif dif_pts < 0:  # Local superior
+      factor_loc = 1.0 + (abs(dif_pts) * 0.035)
       att_loc *= factor_loc
       def_loc /= factor_loc
+      att_vis /= factor_loc
+      def_vis *= factor_loc
 
-  return max(0.60, att_loc), max(0.60, def_loc), max(0.60, att_vis), max(0.60, def_vis)
+  return max(0.70, att_loc), max(0.70, def_loc), max(0.70, att_vis), max(0.70, def_vis)
 
 
 def obtener_altitud(equipo_nombre, df_geo_info):
@@ -172,7 +181,7 @@ def obtener_altitud(equipo_nombre, df_geo_info):
   return 0.0
 
 
-def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.13):
+def tau_dixon_coles(x, y, lambda_param, mu_param, rho=-0.11):
   if x == 0 and y == 0:
     return 1.0 - (lambda_param * mu_param * rho)
   elif x == 0 and y == 1:
@@ -191,9 +200,9 @@ def calcular_dixon_coles(
     df_tabla,
     df_resultados_hist,
     df_geo_info,
-    rho=-0.13,
+    rho=-0.11,
 ):
-  promedio_goles_liga = 1.30
+  promedio_goles_liga = 1.25
 
   att_loc, def_loc, att_vis, def_vis = obtener_fuerza_ponderada(
       equipo_local, equipo_visita, df_resultados_hist, df_tabla
@@ -203,9 +212,9 @@ def calcular_dixon_coles(
   alt_vis = obtener_altitud(equipo_visita, df_geo_info)
 
   dif_altitud = max(0.0, alt_loc - alt_vis)
-  factor_altitud = 1.0 + (dif_altitud / 10000.0)
+  factor_altitud = 1.0 + (dif_altitud / 12000.0)
 
-  home_advantage = 1.05
+  home_advantage = 1.06
 
   lambda_local = (
       att_loc * (def_vis / promedio_goles_liga)
@@ -238,7 +247,6 @@ def calcular_dixon_coles(
   )
   prob_over25 = 1.0 - prob_under25
 
-  # Cálculo directo e incondicional de Ambos Anotan
   prob_btts_si = float(matriz_prob[1:, 1:].sum())
   prob_btts_no = 1.0 - prob_btts_si
 
@@ -247,7 +255,7 @@ def calcular_dixon_coles(
 
 # INTERFAZ STREAMLIT
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader("Modelo Corregido (Matching Flexible + Eliminación de Sesgos)")
+st.subheader("Modelo Calibrado (Regresión a la Media + Peso de Acumulada)")
 
 if st.sidebar.button("🔄 Recargar Datos del Excel"):
   st.cache_data.clear()
@@ -348,20 +356,20 @@ with tab1:
     st.markdown(f"### {prob_visita*100:.1f}%")
     st.caption(f"↑ Cuota Justa: {cuota_visita}")
 
-  if prob_local > 0.50:
+  if prob_local > 0.48:
     fija_txt = f"Gana {equipo_local} (Directo)"
     confian_txt = "Alta"
-  elif prob_visita > 0.50:
+  elif prob_visita > 0.48:
     fija_txt = f"Gana {equipo_visita} (Directo)"
     confian_txt = "Alta"
-  elif (prob_local + prob_empate) > 0.65 and prob_local > prob_visita:
-    fija_txt = f"Local o Empate ({equipo_local})"
-    confian_txt = "Media-Alta"
-  elif (prob_visita + prob_empate) > 0.65 and prob_visita > prob_local:
+  elif (prob_visita + prob_empate) > 0.60 and prob_visita > prob_local:
     fija_txt = f"Empate o Visita ({equipo_visita})"
     confian_txt = "Media-Alta"
+  elif (prob_local + prob_empate) > 0.60 and prob_local > prob_visita:
+    fija_txt = f"Local o Empate ({equipo_local})"
+    confian_txt = "Media-Alta"
   else:
-    fija_txt = "Empate o Doble Opción Visita"
+    fija_txt = "Doble Opción o Sin Apuesta"
     confian_txt = "Media"
 
   st.write(" ")
@@ -373,17 +381,17 @@ with tab1:
 
   st.write("---")
 
-  if prob_over25 >= 0.55:
+  if prob_over25 >= 0.52:
     sug_goles = "Más de 2.5 Goles (+2.5)"
-    conf_goles = "Alta" if prob_over25 >= 0.60 else "Media"
-  elif prob_over25 >= 0.48:
+    conf_goles = "Alta" if prob_over25 >= 0.58 else "Media"
+  elif prob_over25 >= 0.45:
     sug_goles = "Más de 1.5 Goles (+1.5)"
     conf_goles = "Media"
   else:
     sug_goles = "Menos de 2.5 Goles (-2.5)"
     conf_goles = "Alta" if prob_under25 >= 0.58 else "Media"
 
-  if prob_btts_si > prob_btts_no:
+  if prob_btts_si >= 0.50:
     sug_btts = "Ambos Equipos Anotan (Sí)"
     conf_btts = "Alta" if prob_btts_si >= 0.58 else "Media"
   else:
