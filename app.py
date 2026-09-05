@@ -5,15 +5,11 @@ import streamlit as st
 
 # Configuración de página
 st.set_page_config(
-    page_title="Predicciones Liga 1 2026 - Dixon-Coles",
-    page_icon="⚽",
-    layout="wide",
+    page_title="Predicciones Liga 1 2026", page_icon="⚽", layout="wide"
 )
 
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader(
-    "Modelo Estadístico de Dixon-Coles + Ajuste Geográfico + Recencia"
-)
+st.subheader("Modelo Estadístico para la Liga 1 Peruana")
 
 
 # 1. Función Poisson base
@@ -23,7 +19,7 @@ def pmf_poisson(k, lambd):
   return (lambd**k * math.exp(-lambd)) / math.factorial(k)
 
 
-# 2. Factor Tau de Dixon-Coles para Marcadores Bajos (BTTS y 1X2)
+# 2. Factor Tau de Dixon-Coles
 def tau_dixon_coles(x, y, lambda_l, lambda_v, rho=-0.12):
   if x == 0 and y == 0:
     return 1.0 - (lambda_l * lambda_v * rho)
@@ -69,9 +65,8 @@ try:
       "🗺️ Data Geográfica",
   ])
 
-  # --- CÁLCULO DE FUERZAS CON ENFOQUE EN PARTIDOS RECIENTES ---
-  # Se priorizan las últimas 5 jornadas jugadas para capturar el momentum/racha actual
-  CANT_PARTIDOS_RECIENTES = 45  # Aprox últimas 5 fechas de la liga
+  # --- CÁLCULO DE FUERZAS CON RECENCIA ---
+  CANT_PARTIDOS_RECIENTES = 45  # Últimas 5 jornadas aprox.
   df_reciente = (
       df_resultados.tail(CANT_PARTIDOS_RECIENTES)
       if len(df_resultados) > CANT_PARTIDOS_RECIENTES
@@ -87,7 +82,6 @@ try:
     df_l = df_reciente[df_reciente["Local"] == eq]
     df_v = df_reciente[df_reciente["Visita"] == eq]
 
-    # Si hay pocos partidos en el filtro reciente, respaldar con el promedio general
     if len(df_l) < 2:
       df_l = df_resultados[df_resultados["Local"] == eq]
     if len(df_v) < 2:
@@ -113,9 +107,9 @@ try:
         "Def_Vis": def_v,
     }
 
-  # --- TAB 1: PRONÓSTICO INDIVIDUAL (DIXON-COLES + RECENCIA) ---
+  # --- TAB 1: PRONÓSTICO INDIVIDUAL ---
   with tab1:
-    st.header("🔍 Análisis Detallado (Dixon-Coles + Formato Reciente)")
+    st.header("🔍 Análisis Detallado")
 
     jornadas_disponibles = list(df_proximos["Jornada"].unique())
     col_j1, col_j2 = st.columns([1, 2])
@@ -139,6 +133,15 @@ try:
     loc, vis = row_match["Local"], row_match["Visita"]
     alt_l, alt_v = row_match["Altitud_Local"], row_match["Altitud_Visita"]
 
+    # Extraer Fecha y Hora si existen en la pestaña Partidos_Fecha
+    fecha_partido = row_match.get("Fecha", "Fecha por confirmar")
+    hora_partido = row_match.get("Hora", "")
+    info_horario = (
+        f"📅 {fecha_partido} - 🕒 {hora_partido}"
+        if hora_partido
+        else f"📅 {fecha_partido}"
+    )
+
     f_l = fuerzas.get(
         loc, {"Att_Loc": 1.0, "Def_Loc": 1.0, "Att_Vis": 1.0, "Def_Vis": 1.0}
     )
@@ -149,12 +152,10 @@ try:
     lambda_l = f_l["Att_Loc"] * f_v["Def_Vis"] * prom_xg_loc
     lambda_v = f_v["Att_Vis"] * f_l["Def_Loc"] * prom_xg_vis
 
-    # Ajuste de Altitud
     if alt_l >= 2000 and alt_v < 500:
       lambda_l *= 1.15
       lambda_v *= 0.85
 
-    # Suelo ofensivo para evitar subestimar al visitante en BTTS
     lambda_v = max(lambda_v, 0.92)
     lambda_l = max(lambda_l, 1.05)
 
@@ -166,7 +167,7 @@ try:
         tau = tau_dixon_coles(i, j, lambda_l, lambda_v, rho=-0.12)
         matriz[i, j] = p_base * tau
 
-    matriz = matriz / np.sum(matriz)  # Normalización
+    matriz = matriz / np.sum(matriz)
 
     prob_l = np.sum(np.tril(matriz, -1))
     prob_e = np.sum(np.diag(matriz))
@@ -182,7 +183,8 @@ try:
 
     st.markdown("---")
     st.markdown(
-        f"### 🏟️ **{loc}** vs **{vis}** | *{row_match['Ciudad']} ({alt_l} msnm)*"
+        f"### 🏟️ **{loc}** vs **{vis}** | *{row_match['Ciudad']} ({alt_l}"
+        f" msnm)*\n##### {info_horario}"
     )
 
     c1, c2, c3 = st.columns(3)
@@ -201,6 +203,23 @@ try:
         f"{prob_v*100:.1f}%",
         f"Cuota Justa: {1/prob_v:.2f}" if prob_v > 0 else "-",
     )
+
+    st.markdown("---")
+
+    # EVALUACIÓN DE FIJO / ALTA PROBABILIDAD
+    max_prob = max(prob_l, prob_v)
+    equipo_favorito = loc if prob_l > prob_v else vis
+
+    if max_prob >= 0.60:
+      st.success(
+          f"🔥 **PARTIDO FIJO / ALTA PROBABILIDAD:** Existe una probabilidad"
+          f" muy alta ({max_prob*100:.1f}%) a favor de **{equipo_favorito}**."
+      )
+    else:
+      st.warning(
+          "⚠️ **PARTIDO PAREJO / EVALUATIVO:** Las probabilidades están"
+          " divididas; se recomienda cautela en el mercado 1X2."
+      )
 
     st.markdown("---")
 
@@ -239,30 +258,9 @@ try:
       )
       st.info(f"💡 **Sugerencia BTTS:** {rec_btts}")
 
-    st.markdown("---")
-    st.subheader("🎯 Marcadores Exactos Más Probables")
-
-    marcadores = []
-    for i in range(5):
-      for j in range(5):
-        marcadores.append((f"{i} - {j}", matriz[i, j]))
-
-    marcadores.sort(key=lambda x: x[1], reverse=True)
-
-    m1, m2, m3 = st.columns(3)
-    m1.success(
-        f"**1° Opción:** {marcadores[0][0]} ({marcadores[0][1]*100:.1f}%)"
-    )
-    m2.success(
-        f"**2° Opción:** {marcadores[1][0]} ({marcadores[1][1]*100:.1f}%)"
-    )
-    m3.success(
-        f"**3° Opción:** {marcadores[2][0]} ({marcadores[2][1]*100:.1f}%)"
-    )
-
   # --- TAB 2: RESUMEN DE LA JORNADA ---
   with tab2:
-    st.header("📊 Resumen Consolidado de la Fecha (Dixon-Coles)")
+    st.header("📊 Resumen Consolidado de la Fecha")
     jornada_tabla = st.selectbox(
         "Filtrar Fecha para Ver Matriz:",
         jornadas_disponibles,
@@ -275,6 +273,8 @@ try:
     for _, row in df_jornada_comp.iterrows():
       l, v = row["Local"], row["Visita"]
       a_l, a_v = row["Altitud_Local"], row["Altitud_Visita"]
+      f_part = row.get("Fecha", "")
+      h_part = row.get("Hora", "")
 
       fl = fuerzas.get(
           l, {"Att_Loc": 1.0, "Def_Loc": 1.0, "Att_Vis": 1.0, "Def_Vis": 1.0}
@@ -310,6 +310,7 @@ try:
 
       resumen_list.append({
           "Partido": f"{l} vs {v}",
+          "Fecha": f"{f_part} {h_part}".strip(),
           "Ciudad": row["Ciudad"],
           "Prob. Local": f"{pl*100:.1f}%",
           "Prob. Empate": f"{pe*100:.1f}%",
