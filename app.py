@@ -35,9 +35,9 @@ def normalizar_texto(texto):
   if not isinstance(texto, str):
     return ""
   txt = texto.lower().strip()
-  # Limpieza de términos institucionales para aislar la palabra clave del equipo
+  # Limpieza conservadora
   txt = re.sub(
-      r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion|asociación|college)\b",
+      r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion|asociación)\b",
       "",
       txt,
   )
@@ -45,26 +45,14 @@ def normalizar_texto(texto):
 
 
 def coincidencia_equipo(nombre1, nombre2):
-  """Evaluación multicapa para garantizar match entre pestañas."""
   n1 = normalizar_texto(nombre1)
   n2 = normalizar_texto(nombre2)
 
   if not n1 or not n2:
     return False
 
-  # Coincidencia exacta o contención directa de subcadena
   if n1 in n2 or n2 in n1:
     return True
-
-  # Mapeo manual de alias para casos extremos
-  alias = {
-      "alianza": ["alianza lima", "alianza"],
-      "juan pablo": ["juan pablo ii", "juan pablo ii college", "juan pablo"],
-  }
-
-  for clave, variaciones in alias.items():
-    if any(v in n1 for v in variaciones) and any(v in n2 for v in variaciones):
-      return True
 
   palabras_1 = set(n1.split())
   palabras_2 = set(n2.split())
@@ -74,7 +62,7 @@ def coincidencia_equipo(nombre1, nombre2):
 def obtener_fuerza_ponderada(
     equipo_local, equipo_visita, df_resultados_hist, df_tabla_acumulada
 ):
-  # 1. BÚSQUEDA GARANTIZADA DE PUNTOS EN TABLA ACUMULADA
+  # 1. OBTENCIÓN DE PUNTOS EN LA ACUMULADA
   pts_loc, pts_vis = None, None
 
   if not df_tabla_acumulada.empty:
@@ -102,13 +90,13 @@ def obtener_fuerza_ponderada(
           except Exception:
             pass
 
-  # Fallback si por algún motivo no estuviera en el excel
+  # Valores por defecto si no encuentra puntos
   if pts_loc is None:
-    pts_loc = 22.0
+    pts_loc = 20.0
   if pts_vis is None:
-    pts_vis = 42.0  # Rating de equipo top/candidato
+    pts_vis = 38.0
 
-  # 2. CALCULO BASE DESDE HISTORIAL CON PRIOR BAYESIANO
+  # 2. CÁLCULO DE PROMEDIOS HISTÓRICOS DE GOLES (CLAUSURA)
   c_loc = next(
       (c for c in df_resultados_hist.columns if "local" in c.lower()), None
   )
@@ -132,8 +120,9 @@ def obtener_fuerza_ponderada(
       None,
   )
 
-  att_loc, def_loc = 1.20, 1.15
-  att_vis, def_vis = 1.35, 1.00
+  # Valores base realistas de la Liga 1
+  att_loc, def_loc = 1.30, 1.15
+  att_vis, def_vis = 1.30, 1.05
 
   if c_loc and c_vis and c_gloc and c_gvis:
     p_loc = df_resultados_hist[
@@ -148,36 +137,29 @@ def obtener_fuerza_ponderada(
         .apply(lambda x: coincidencia_equipo(equipo_visita, x))
     ].copy()
 
-    # Ponderación suavizada (media observada + media teórica para evitar distorsiones por muestra pequeña)
     if not p_loc.empty:
-      att_loc = (p_loc[c_gloc].astype(float).clip(upper=2.5).mean() + 1.20) / 2
+      att_loc = (p_loc[c_gloc].astype(float).clip(upper=2.5).mean() + 1.30) / 2
       def_loc = (p_loc[c_gvis].astype(float).clip(upper=2.5).mean() + 1.15) / 2
 
     if not p_vis.empty:
-      att_vis = (p_vis[c_gvis].astype(float).clip(upper=2.5).mean() + 1.35) / 2
-      def_vis = (p_vis[c_gloc].astype(float).clip(upper=2.5).mean() + 1.00) / 2
+      att_vis = (p_vis[c_gvis].astype(float).clip(upper=2.5).mean() + 1.30) / 2
+      def_vis = (p_vis[c_gloc].astype(float).clip(upper=2.5).mean() + 1.05) / 2
 
-  # 3. MODIFICADOR POR JERARQUÍA EN ACUMULADA
-  dif_pts = pts_vis - pts_loc  # Positivo indica que el visitante es superior
+  # 3. MODIFICADOR SUAVE POR DIFERENCIA DE PUNTOS EN ACUMULADA
+  dif_pts = pts_vis - pts_loc
 
-  if dif_pts > 0:
-    factor = 1.0 + (dif_pts * 0.022)  # Ajuste logarítmico directo
-    att_vis *= factor
-    def_vis /= factor
-    att_loc /= factor
-    def_loc *= factor
-  elif dif_pts < 0:
-    factor = 1.0 + (abs(dif_pts) * 0.022)
-    att_loc *= factor
-    def_loc /= factor
-    att_vis /= factor
-    def_vis *= factor
+  if dif_pts > 0:  # Visita superior
+    att_vis *= 1.0 + (dif_pts * 0.012)
+    def_vis *= 1.0 - (dif_pts * 0.008)
+  elif dif_pts < 0:  # Local superior
+    att_loc *= 1.0 + (abs(dif_pts) * 0.012)
+    def_loc *= 1.0 - (abs(dif_pts) * 0.008)
 
   return (
-      max(0.65, att_loc),
-      max(0.65, def_loc),
-      max(0.65, att_vis),
-      max(0.65, def_vis),
+      max(0.85, att_loc),
+      max(0.80, def_loc),
+      max(0.85, att_vis),
+      max(0.80, def_vis),
   )
 
 
@@ -220,7 +202,7 @@ def calcular_dixon_coles(
     df_geo_info,
     rho=-0.11,
 ):
-  promedio_goles_liga = 1.26
+  promedio_goles_liga = 1.25
 
   att_loc, def_loc, att_vis, def_vis = obtener_fuerza_ponderada(
       equipo_local, equipo_visita, df_resultados_hist, df_tabla
@@ -229,18 +211,21 @@ def calcular_dixon_coles(
   alt_loc = obtener_altitud(equipo_local, df_geo_info)
   alt_vis = obtener_altitud(equipo_visita, df_geo_info)
 
-  # La altitud solo afecta si es mayor a 1,000 msnm (Chongoyape está a 150 msnm, no afecta)
   dif_altitud = max(0.0, alt_loc - alt_vis)
   factor_altitud = (
       1.0 + (dif_altitud / 12000.0) if alt_loc >= 1000 else 1.0
   )
 
-  home_advantage = 1.05  # Ventaja de localía estándar
+  home_advantage = 1.08  # Ventaja de localía en el llano
 
-  lambda_local = (
-      att_loc * (def_vis / promedio_goles_liga)
-  ) * home_advantage * factor_altitud
-  mu_visita = att_vis * (def_loc / promedio_goles_liga)
+  # Goles esperados con piso técnico
+  lambda_local = max(
+      1.05,
+      (att_loc * (def_vis / promedio_goles_liga))
+      * home_advantage
+      * factor_altitud,
+  )
+  mu_visita = max(1.15, att_vis * (def_loc / promedio_goles_liga))
 
   max_goles = 8
   matriz_prob = np.zeros((max_goles, max_goles))
@@ -268,7 +253,7 @@ def calcular_dixon_coles(
   )
   prob_over25 = 1.0 - prob_under25
 
-  # Ambos Anotan (Matriz excluida de filas/columnas 0)
+  # Ambos equipos anotan (probabilidad acumulada de submatriz [1:, 1:])
   prob_btts_si = float(matriz_prob[1:, 1:].sum())
 
   return prob_local, prob_empate, prob_visita, prob_over25, prob_btts_si
@@ -276,7 +261,7 @@ def calcular_dixon_coles(
 
 # INTERFAZ STREAMLIT
 st.title("⚽ Sistema de Predicciones Liga 1 2026")
-st.subheader("Modelo Dixon-Coles Corregido y Calibrado")
+st.subheader("Modelo Dixon-Coles Calibrado & Equilibrado")
 
 if st.sidebar.button("🔄 Recargar Datos del Excel"):
   st.cache_data.clear()
