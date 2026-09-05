@@ -45,7 +45,7 @@ def cargar_datos():
   return df_geo, df_resultados, df_proximos, df_clausura, df_acumulado
 
 
-# Botón lateral para refrescar cache cuando subas nuevos resultados
+# Botón lateral para refrescar cache
 with st.sidebar:
   st.header("⚙️ Opciones")
   if st.button("🔄 Recargar Datos del Excel"):
@@ -133,13 +133,25 @@ try:
     loc, vis = row_match["Local"], row_match["Visita"]
     alt_l, alt_v = row_match["Altitud_Local"], row_match["Altitud_Visita"]
 
-    # Extraer Fecha y Hora si existen en la pestaña Partidos_Fecha
-    fecha_partido = row_match.get("Fecha", "Fecha por confirmar")
-    hora_partido = row_match.get("Hora", "")
+    # EXTRAER FECHA Y HORA FORMATO SEGURO
+    val_fecha = row_match.get("Fecha", None)
+    val_hora = row_match.get("Hora", None)
+
+    if pd.notna(val_fecha):
+      if isinstance(val_fecha, (pd.Timestamp, pd.DatetimeIndex)):
+        fecha_str = val_fecha.strftime("%d/%m/%Y")
+      else:
+        fecha_str = str(val_fecha)
+    else:
+      fecha_str = "Fecha por confirmar"
+
+    if pd.notna(val_hora):
+      hora_str = str(val_hora)[:5]
+    else:
+      hora_str = ""
+
     info_horario = (
-        f"📅 {fecha_partido} - 🕒 {hora_partido}"
-        if hora_partido
-        else f"📅 {fecha_partido}"
+        f"📅 {fecha_str} - 🕒 {hora_str}" if hora_str else f"📅 {fecha_str}"
     )
 
     f_l = fuerzas.get(
@@ -273,8 +285,12 @@ try:
     for _, row in df_jornada_comp.iterrows():
       l, v = row["Local"], row["Visita"]
       a_l, a_v = row["Altitud_Local"], row["Altitud_Visita"]
-      f_part = row.get("Fecha", "")
-      h_part = row.get("Hora", "")
+
+      f_val = row.get("Fecha", "")
+      h_val = row.get("Hora", "")
+
+      f_txt = str(f_val) if pd.notna(f_val) else ""
+      h_txt = str(h_val)[:5] if pd.notna(h_val) else ""
 
       fl = fuerzas.get(
           l, {"Att_Loc": 1.0, "Def_Loc": 1.0, "Att_Vis": 1.0, "Def_Vis": 1.0}
@@ -310,7 +326,7 @@ try:
 
       resumen_list.append({
           "Partido": f"{l} vs {v}",
-          "Fecha": f"{f_part} {h_part}".strip(),
+          "Fecha / Hora": f"{f_txt} {h_txt}".strip(),
           "Ciudad": row["Ciudad"],
           "Prob. Local": f"{pl*100:.1f}%",
           "Prob. Empate": f"{pe*100:.1f}%",
