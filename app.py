@@ -1,5 +1,6 @@
 import os
 import re
+import unicodedata
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson
@@ -47,8 +48,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 1. DICCIONARIOS Y NORMALIZACIÓN DE NOMBRES
+# 1. NORMALIZACIÓN DE TEXTO Y DICCIONARIO DE EQUIPOS
 # =========================================================
+def normalizar_texto(texto):
+    if not isinstance(texto, str):
+        return ""
+    texto = unicodedata.normalize('NFD', texto).encode('ascii', 'ignore').decode("utf-8")
+    texto = re.sub(r'[^a-zA-Z0-9\s]', '', texto)
+    return " ".join(texto.lower().split())
+
 DICCIONARIO_EQUIPOS = {
     "juan pablo ii college": "colegio juan pablo ii",
     "juan pablo ii": "colegio juan pablo ii",
@@ -63,9 +71,7 @@ DICCIONARIO_EQUIPOS = {
     "universitario de deportes": "universitario",
     "sport boys": "sport boys",
     "alianza atletico": "alianza atletico",
-    "alianza atlético": "alianza atletico",
     "atletico grau": "atletico grau",
-    "atlético grau": "atletico grau",
     "comerciantes unidos": "comerciantes unidos",
     "fbc melgar": "melgar",
     "melgar": "melgar",
@@ -81,8 +87,8 @@ DICCIONARIO_EQUIPOS = {
     "ut c": "ut c",
     "adt": "adt",
     "cienciano": "cienciano",
-    "club cienciano": "cienciano",
     "cd moquegua": "cd moquegua",
+    "moquegua": "cd moquegua",
 }
 
 ALTITUDES_DEFAULT = {
@@ -106,12 +112,10 @@ ALTITUDES_DEFAULT = {
 }
 
 def estandarizar_nombre(nombre):
-    if not isinstance(nombre, str):
-        return ""
-    txt = nombre.lower().strip()
-    txt = re.sub(r"\b(club|fc|cd|atletico|atlético|deportivo|asociacion|asociación)\b", "", txt)
-    txt = re.sub(r"\s+", " ", txt).strip()
-    return DICCIONARIO_EQUIPOS.get(txt, txt)
+    clean_txt = normalizar_texto(nombre)
+    clean_txt = re.sub(r"\b(club|fc|cd|atletico|deportivo|asociacion)\b", "", clean_txt)
+    clean_txt = " ".join(clean_txt.split())
+    return DICCIONARIO_EQUIPOS.get(clean_txt, clean_txt)
 
 def resolver_columna_club(df):
     df.columns = [str(c).strip().lower() for c in df.columns]
@@ -125,7 +129,7 @@ def resolver_columna_club(df):
     return df
 
 # =========================================================
-# 2. CARGA Y ACTUALIZACIÓN DE DATOS
+# 2. CARGA Y GUARDA DE DATOS
 # =========================================================
 def obtener_ruta_excel(nombre_archivo="Liga1_2026.xlsx"):
     directorio_actual = os.path.dirname(os.path.abspath(__file__))
@@ -140,7 +144,7 @@ def cargar_datos_excel(fuente_archivo):
         df_partidos = pd.read_excel(xls, sheet_name="Partidos_Fecha")
         df_partidos.columns = df_partidos.columns.str.strip().str.lower()
         
-        # Extracción limpia basada en la columna 'jornada' de tu Excel
+        # Extracción limpia de la columna 'jornada' sin confundirse con 'fecha'
         if "jornada" in df_partidos.columns:
             df_partidos["jornada_num"] = df_partidos["jornada"].astype(str).str.extract(r"(\d+)")[0].fillna("8")
         elif "fecha_num" in df_partidos.columns:
@@ -205,19 +209,21 @@ def guardar_cambios_excel(df_partidos, df_acumulada, df_clausura, df_geo, ruta):
 # 3. CÁLCULOS MODELO DIXON-COLES
 # =========================================================
 def obtener_fuerza_equipos(equipo_local, equipo_visita, df_tabla):
-    row_loc = df_tabla[df_tabla["equipo_std"] == equipo_local]
-    row_vis = df_tabla[df_tabla["equipo_std"] == equipo_visita]
+    df_t = df_tabla.copy()
+    row_loc = df_t.loc[df_t["equipo_std"] == equipo_local]
+    row_vis = df_t.loc[df_t["equipo_std"] == equipo_visita]
 
-    att_loc = row_loc["gf"].values[0] / max(1, row_loc["pj"].values[0]) if not row_loc.empty and "gf" in row_loc.columns else 1.25
-    def_loc = row_loc["gc"].values[0] / max(1, row_loc["pj"].values[0]) if not row_loc.empty and "gc" in row_loc.columns else 1.15
+    att_loc = float(row_loc["gf"].values[0]) / max(1, float(row_loc["pj"].values[0])) if not row_loc.empty and "gf" in row_loc.columns else 1.25
+    def_loc = float(row_loc["gc"].values[0]) / max(1, float(row_loc["pj"].values[0])) if not row_loc.empty and "gc" in row_loc.columns else 1.15
 
-    att_vis = row_vis["gf"].values[0] / max(1, row_vis["pj"].values[0]) if not row_vis.empty and "gf" in row_vis.columns else 1.10
-    def_vis = row_vis["gc"].values[0] / max(1, row_vis["pj"].values[0]) if not row_vis.empty and "gc" in row_vis.columns else 1.30
+    att_vis = float(row_vis["gf"].values[0]) / max(1, float(row_vis["pj"].values[0])) if not row_vis.empty and "gf" in row_vis.columns else 1.10
+    def_vis = float(row_vis["gc"].values[0]) / max(1, float(row_vis["pj"].values[0])) if not row_vis.empty and "gc" in row_vis.columns else 1.30
 
     return att_loc, def_loc, att_vis, def_vis
 
 def obtener_info_geo(equipo, df_geo):
-    row = df_geo[df_geo["equipo_std"] == equipo]
+    df_g = df_geo.copy()
+    row = df_g.loc[df_g["equipo_std"] == equipo]
     if not row.empty:
         alt = float(row["altitud"].values[0]) if "altitud" in row.columns else ALTITUDES_DEFAULT.get(equipo, (150, "Lima"))[0]
         ciudad = str(row["ciudad"].values[0]) if "ciudad" in row.columns else ALTITUDES_DEFAULT.get(equipo, (150, "Lima"))[1]
@@ -276,7 +282,7 @@ def calcular_dixon_coles(equipo_local, equipo_visita, df_tabla, df_geo_info, rho
     return prob_local, prob_empate, prob_visita, prob_over25, prob_under25, prob_btts_si, prob_btts_no, alt_loc, ciudad_loc
 
 # =========================================================
-# 4. INTERFAZ Y PANEL DE ACTUALIZACIÓN
+# 4. INTERFAZ STREAMLIT
 # =========================================================
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 st.caption("Ajustado por Dixon-Coles y Factor de Altitud Real")
@@ -302,9 +308,8 @@ else:
         tabla_ref = st.sidebar.radio("Tabla de Rendimiento:", ("Tabla Acumulada", "Tabla Clausura"), index=0)
         df_tabla_act = df_acum if tabla_ref == "Tabla Acumulada" else df_claus
 
-        # Listado dinámico de jornadas ordenadas numéricamente (8, 9, etc.)
+        # Listado dinámico de jornadas
         jornadas_raw = sorted(df_partidos["jornada_num"].unique(), key=lambda x: int(x) if str(x).isdigit() else 0)
-        
         idx_defecto = jornadas_raw.index("8") if "8" in jornadas_raw else 0
         jornada_sel = st.sidebar.selectbox(
             "Seleccionar Jornada:",
@@ -313,19 +318,22 @@ else:
             index=idx_defecto
         )
 
-        df_f = df_partidos[df_partidos["jornada_num"] == jornada_sel]
+        # Filtrar limpiando el índice
+        df_f = df_partidos[df_partidos["jornada_num"].astype(str) == str(jornada_sel)].copy()
+        df_f = df_f.reset_index(drop=True)
 
         tab_partidos, tab_actualizar = st.tabs([f"📊 Pronósticos Jornada {jornada_sel}", "📝 Actualizar Resultados y Marcadores"])
 
         with tab_partidos:
             st.subheader(f"Jornada {jornada_sel} - Partidos y Pronósticos ({tabla_ref})")
 
-            for idx, row in df_f.iterrows():
+            for idx in range(len(df_f)):
+                row = df_f.iloc[idx]
                 eq_loc_std = row["local_std"]
                 eq_vis_std = row["visita_std"]
 
-                nombre_loc = row["local"]
-                nombre_vis = row["visita"]
+                nombre_loc = str(row["local"]).strip()
+                nombre_vis = str(row["visita"]).strip()
                 fecha_partido = str(row.get("fecha_str", "2026-09-06")).split(" ")[0]
                 hora_partido = str(row.get("hora", "15:00"))
 
@@ -409,9 +417,10 @@ else:
 
         with tab_actualizar:
             st.subheader(f"⚙️ Panel de Actualización de Marcadores - Jornada {jornada_sel}")
-            st.info("Ingresa los marcadores reales para actualizar la base de datos y recalcular métricas.")
+            st.info("Ingresa los marcadores reales para actualizar la base de datos.")
 
-            for idx, row in df_f.iterrows():
+            for idx in range(len(df_f)):
+                row = df_f.iloc[idx]
                 c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 3, 2])
                 with c1:
                     st.write(f"**{row['local']}**")
@@ -426,9 +435,13 @@ else:
                 with c5:
                     jugado = st.checkbox("Jugado", value=bool(row["jugado"]), key=f"jug_{idx}")
 
-                df_partidos.loc[idx, "goles_local"] = g_loc
-                df_partidos.loc[idx, "goles_visita"] = g_vis
-                df_partidos.loc[idx, "jugado"] = jugado
+                # Actualizar DataFrame global por coincidencia de fila
+                match_mask = (df_partidos["jornada_num"].astype(str) == str(jornada_sel)) & \
+                             (df_partidos["local"] == row["local"]) & \
+                             (df_partidos["visita"] == row["visita"])
+                df_partidos.loc[match_mask, "goles_local"] = g_loc
+                df_partidos.loc[match_mask, "goles_visita"] = g_vis
+                df_partidos.loc[match_mask, "jugado"] = jugado
 
             st.write("")
             if st.button("💾 Guardar Marcadores y Recalcular Excel"):
