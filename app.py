@@ -1,4 +1,4 @@
-import math
+import os
 import re
 import numpy as np
 import pandas as pd
@@ -76,10 +76,16 @@ def estandarizar_nombre(nombre):
 # =========================================================
 # 2. CARGA DE DATOS DESDE EXCEL
 # =========================================================
+def obtener_ruta_excel(nombre_archivo="Liga1_2026.xlsx"):
+  """Obtiene la ruta absoluta del archivo Excel en la carpeta del script."""
+  directorio_actual = os.path.dirname(os.path.abspath(__file__))
+  return os.path.join(directorio_actual, nombre_archivo)
+
+
 @st.cache_data(ttl=60)
-def cargar_datos_excel(ruta_archivo="LIGA1.xlsx"):
+def cargar_datos_excel(fuente_archivo):
   try:
-    xls = pd.ExcelFile(ruta_archivo)
+    xls = pd.ExcelFile(fuente_archivo)
 
     # Carga de pestañas
     df_partidos = pd.read_excel(xls, sheet_name="Partidos_Fecha")
@@ -109,11 +115,9 @@ def cargar_datos_excel(ruta_archivo="LIGA1.xlsx"):
 # 3. AUXILIARES: FUERZA Y ALTITUD
 # =========================================================
 def obtener_fuerza_equipos(equipo_local, equipo_visita, df_tabla):
-  """Obtiene ataque/defensa o asigna valores por defecto si no se cruza."""
   row_loc = df_tabla[df_tabla["equipo_std"] == equipo_local]
   row_vis = df_tabla[df_tabla["equipo_std"] == equipo_visita]
 
-  # Promedio de goles anotados/recibidos
   att_loc = row_loc["gf"].values[0] / max(1, row_loc["pj"].values[0]) if not row_loc.empty and "gf" in row_loc.columns else 1.25
   def_loc = row_loc["gc"].values[0] / max(1, row_loc["pj"].values[0]) if not row_loc.empty and "gc" in row_loc.columns else 1.15
 
@@ -127,7 +131,7 @@ def obtener_altitud(equipo, df_geo):
   row = df_geo[df_geo["equipo_std"] == equipo]
   if not row.empty and "altitud" in row.columns:
     return float(row["altitud"].values[0])
-  return 150.0  # Altitud base por defecto (Costa)
+  return 150.0
 
 
 # =========================================================
@@ -156,18 +160,15 @@ def calcular_dixon_coles(
   alt_loc = obtener_altitud(equipo_local, df_geo_info)
   alt_vis = obtener_altitud(equipo_visita, df_geo_info)
 
-  # Control de factor altitud
   dif_altitud = max(0.0, alt_loc - alt_vis)
   home_advantage = 1.15 if alt_loc < 1000 else 1.28
 
-  # Factor que incrementa ventaja local si el rival sube a la altura
   factor_def_visita = 1.0 + (dif_altitud / 6500.0) if alt_loc >= 2000 else 1.0
 
   lambda_local = max(
       1.05, (att_loc * (def_vis / 1.20)) * home_advantage * factor_def_visita
   )
 
-  # Penalización a la capacidad anotadora del visitante en ciudades de altura
   penalizacion_visita_altura = 0.78 if alt_loc >= 2500 else 1.0
   mu_visita = max(0.55, att_vis * (def_loc / 1.20) * penalizacion_visita_altura)
 
@@ -216,75 +217,100 @@ def calcular_dixon_coles(
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 st.caption("Ajustado por Dixon-Coles y Factor de Altitud Real")
 
-# Botón Lateral para Recargar Excel
-if st.sidebar.button("🔄 Recargar Datos del Excel"):
+# Opción en barra lateral para subir el archivo manualmente
+st.sidebar.header("📁 Archivo de Datos")
+archivo_subido = st.sidebar.file_uploader(
+    "Subir archivo Excel (Liga1_2026.xlsx)", type=["xlsx"]
+)
+
+# Búsqueda local de Liga1_2026.xlsx
+ruta_local = obtener_ruta_excel("Liga1_2026.xlsx")
+
+if archivo_subido is not None:
+  fuente_excel = archivo_subido
+elif os.path.exists(ruta_local):
+  fuente_excel = ruta_local
+else:
+  fuente_excel = None
+
+# Botón para recargar la memoria caché
+if st.sidebar.button("🔄 Recargar Datos"):
   st.cache_data.clear()
   st.rerun()
 
-df_partidos, df_tabla, df_geo, error = cargar_datos_excel()
-
-if error:
-  st.error(f"Error al cargar el archivo 'LIGA1.xlsx': {error}")
-else:
-  fechas_disponibles = sorted(df_partidos["fecha"].unique())
-  fecha_sel = st.sidebar.selectbox(
-      "Seleccionar Fecha de la Liga 1:", fechas_disponibles
+if fuente_excel is None:
+  st.error(
+      "❌ No se encontró el archivo 'Liga1_2026.xlsx' en la carpeta del"
+      " proyecto."
   )
+  st.info(
+      "👉 Por favor, arrastra y suelta tu archivo 'Liga1_2026.xlsx' en el"
+      " cargador de la barra lateral izquierda."
+  )
+else:
+  df_partidos, df_tabla, df_geo, error = cargar_datos_excel(fuente_excel)
 
-  df_f = df_partidos[df_partidos["fecha"] == fecha_sel]
-
-  st.subheader(f"Pronósticos para la Fecha {fecha_sel}")
-
-  for idx, row in df_f.iterrows():
-    eq_loc_std = row["local_std"]
-    eq_vis_std = row["visita_std"]
-
-    nombre_loc_orig = row["local"]
-    nombre_vis_orig = row["visita"]
-
-    p_loc, p_emp, p_vis, p_over, p_btts, matriz = calcular_dixon_coles(
-        eq_loc_std, eq_vis_std, df_tabla, df_geo
+  if error:
+    st.error(f"Error al procesar la estructura del Excel: {error}")
+  else:
+    fechas_disponibles = sorted(df_partidos["fecha"].unique())
+    fecha_sel = st.sidebar.selectbox(
+        "Seleccionar Fecha de la Liga 1:", fechas_disponibles
     )
 
-    # Lógica de sugerencias de apuesta 1X2
-    if p_loc >= 0.40 and (p_loc - p_vis) >= 0.08:
-      fija_txt = f"Gana {nombre_loc_orig} (Directo)"
-      confian_txt = "Alta" if p_loc >= 0.52 else "Media-Alta"
-    elif p_vis >= 0.40 and (p_vis - p_loc) >= 0.08:
-      fija_txt = f"Gana {nombre_vis_orig} (Directo)"
-      confian_txt = "Alta" if p_vis >= 0.52 else "Media-Alta"
-    elif (p_loc + p_emp) >= 0.62:
-      fija_txt = f"Local o Empate ({nombre_loc_orig})"
-      confian_txt = "Media"
-    elif (p_vis + p_emp) >= 0.62:
-      fija_txt = f"Empate o Visita ({nombre_vis_orig})"
-      confian_txt = "Media"
-    else:
-      fija_txt = "Doble Opción / Partido Abierto"
-      confian_txt = "Media"
+    df_f = df_partidos[df_partidos["fecha"] == fecha_sel]
 
-    # Tarjeta por Partido
-    with st.expander(f"📌 {nombre_loc_orig} vs {nombre_vis_orig}"):
-      col1, col2, col3, col4 = st.columns(4)
+    st.subheader(f"Pronósticos para la Fecha {fecha_sel}")
 
-      with col1:
-        st.metric(
-            label=f"Victoria {nombre_loc_orig}", value=f"{p_loc * 100:.1f}%"
-        )
-        st.caption(f"Cuota Justa: {1 / max(p_loc, 0.001):.2f}")
+    for idx, row in df_f.iterrows():
+      eq_loc_std = row["local_std"]
+      eq_vis_std = row["visita_std"]
 
-      with col2:
-        st.metric(label="Empate", value=f"{p_emp * 100:.1f}%")
-        st.caption(f"Cuota Justa: {1 / max(p_emp, 0.001):.2f}")
+      nombre_loc_orig = row["local"]
+      nombre_vis_orig = row["visita"]
 
-      with col3:
-        st.metric(
-            label=f"Victoria {nombre_vis_orig}", value=f"{p_vis * 100:.1f}%"
-        )
-        st.caption(f"Cuota Justa: {1 / max(p_vis, 0.001):.2f}")
+      p_loc, p_emp, p_vis, p_over, p_btts, matriz = calcular_dixon_coles(
+          eq_loc_std, eq_vis_std, df_tabla, df_geo
+      )
 
-      with col4:
-        st.write(f"**Sugerencia:** {fija_txt}")
-        st.write(f"**Nivel Confianza:** {confian_txt}")
-        st.write(f"**Over 2.5:** {p_over * 100:.1f}%")
-        st.write(f"**Ambos Anotan:** {p_btts * 100:.1f}%")
+      # Sugerencia de apuesta
+      if p_loc >= 0.40 and (p_loc - p_vis) >= 0.08:
+        fija_txt = f"Gana {nombre_loc_orig} (Directo)"
+        confian_txt = "Alta" if p_loc >= 0.52 else "Media-Alta"
+      elif p_vis >= 0.40 and (p_vis - p_loc) >= 0.08:
+        fija_txt = f"Gana {nombre_vis_orig} (Directo)"
+        confian_txt = "Alta" if p_vis >= 0.52 else "Media-Alta"
+      elif (p_loc + p_emp) >= 0.62:
+        fija_txt = f"Local o Empate ({nombre_loc_orig})"
+        confian_txt = "Media"
+      elif (p_vis + p_emp) >= 0.62:
+        fija_txt = f"Empate o Visita ({nombre_vis_orig})"
+        confian_txt = "Media"
+      else:
+        fija_txt = "Doble Opción / Partido Abierto"
+        confian_txt = "Media"
+
+      with st.expander(f"📌 {nombre_loc_orig} vs {nombre_vis_orig}"):
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+          st.metric(
+              label=f"Victoria {nombre_loc_orig}", value=f"{p_loc * 100:.1f}%"
+          )
+          st.caption(f"Cuota Justa: {1 / max(p_loc, 0.001):.2f}")
+
+        with col2:
+          st.metric(label="Empate", value=f"{p_emp * 100:.1f}%")
+          st.caption(f"Cuota Justa: {1 / max(p_emp, 0.001):.2f}")
+
+        with col3:
+          st.metric(
+              label=f"Victoria {nombre_vis_orig}", value=f"{p_vis * 100:.1f}%"
+          )
+          st.caption(f"Cuota Justa: {1 / max(p_vis, 0.001):.2f}")
+
+        with col4:
+          st.write(f"**Sugerencia:** {fija_txt}")
+          st.write(f"**Nivel Confianza:** {confian_txt}")
+          st.write(f"**Over 2.5:** {p_over * 100:.1f}%")
+          st.write(f"**Ambos Anotan:** {p_btts * 100:.1f}%")
