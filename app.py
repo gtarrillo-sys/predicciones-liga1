@@ -59,7 +59,6 @@ DICCIONARIO_EQUIPOS = {
     "cienciano": "cienciano",
 }
 
-# Altitudes por defecto si fallara la lectura de la hoja
 ALTITUDES_DEFAULT = {
     "adt": 3050,
     "cienciano": 3360,
@@ -94,6 +93,23 @@ def estandarizar_nombre(nombre):
   return DICCIONARIO_EQUIPOS.get(txt, txt)
 
 
+def resolver_columna_club(df):
+  """Mapea dinámicamente la columna 'club' o sus variantes a 'club'."""
+  cols_map = {str(c).strip().lower(): c for c in df.columns}
+  df.columns = [str(c).strip().lower() for c in df.columns]
+
+  posibles = ["club", "equipo", "nombre", "team", "clubes", "equipos"]
+  for pos in posibles:
+    if pos in df.columns:
+      df = df.rename(columns={pos: "club"})
+      break
+
+  if "club" not in df.columns:
+    df["club"] = df.iloc[:, 0]
+
+  return df
+
+
 # =========================================================
 # 2. CARGA DE DATOS DESDE EXCEL
 # =========================================================
@@ -106,42 +122,46 @@ def obtener_ruta_excel(nombre_archivo="Liga1_2026.xlsx"):
 def cargar_datos_excel(fuente_archivo):
   try:
     xls = pd.ExcelFile(fuente_archivo)
-    pestanas_disponibles = xls.sheet_names
+    pestanas = xls.sheet_names
 
-    # Carga de partidos y tabla
+    # 1. Partidos (Usa 'local' y 'visita')
     df_partidos = pd.read_excel(xls, sheet_name="Partidos_Fecha")
-    df_tabla = pd.read_excel(xls, sheet_name="Tabla_Acumulada")
+    df_partidos.columns = df_partidos.columns.str.strip().str.lower()
+    df_partidos["local_std"] = df_partidos["local"].apply(estandarizar_nombre)
+    df_partidos["visita_std"] = df_partidos["visita"].apply(
+        estandarizar_nombre
+    )
 
-    # Lectura flexible de la hoja geográfica (Data_Geografica, Geo_Info o fallback)
-    nombre_hoja_geo = None
-    for posible in ["Data_Geografica", "Geo_Info", "Geografia", "Geo"]:
-      if posible in pestanas_disponibles:
-        nombre_hoja_geo = posible
-        break
-
-    if nombre_hoja_geo:
-      df_geo = pd.read_excel(xls, sheet_name=nombre_hoja_geo)
-      df_geo.columns = df_geo.columns.str.strip().str.lower()
-      df_geo["equipo_std"] = df_geo["equipo"].apply(estandarizar_nombre)
+    # 2. Data Geográfica (Usa 'club')
+    if "Data_Geografica" in pestanas:
+      df_geo = pd.read_excel(xls, sheet_name="Data_Geografica")
+      df_geo = resolver_columna_club(df_geo)
+      df_geo["equipo_std"] = df_geo["club"].apply(estandarizar_nombre)
     else:
       df_geo = pd.DataFrame(
           list(ALTITUDES_DEFAULT.items()), columns=["equipo_std", "altitud"]
       )
 
-    # Limpieza de columnas principales
-    df_partidos.columns = df_partidos.columns.str.strip().str.lower()
-    df_tabla.columns = df_tabla.columns.str.strip().str.lower()
-
-    # Estandarización de nombres
-    df_partidos["local_std"] = df_partidos["local"].apply(estandarizar_nombre)
-    df_partidos["visita_std"] = df_partidos["visita"].apply(
+    # 3. Tabla Acumulada (Usa 'club')
+    df_acumulada = pd.read_excel(xls, sheet_name="Tabla_Acumulada")
+    df_acumulada = resolver_columna_club(df_acumulada)
+    df_acumulada["equipo_std"] = df_acumulada["club"].apply(
         estandarizar_nombre
     )
-    df_tabla["equipo_std"] = df_tabla["equipo"].apply(estandarizar_nombre)
 
-    return df_partidos, df_tabla, df_geo, None
+    # 4. Tabla Clausura (Usa 'club') - Opcional
+    if "Tabla_Clausura" in pestanas:
+      df_clausura = pd.read_excel(xls, sheet_name="Tabla_Clausura")
+      df_clausura = resolver_columna_club(df_clausura)
+      df_clausura["equipo_std"] = df_clausura["club"].apply(
+          estandarizar_nombre
+      )
+    else:
+      df_clausura = df_acumulada.copy()
+
+    return df_partidos, df_acumulada, df_clausura, df_geo, None
   except Exception as e:
-    return None, None, None, str(e)
+    return None, None, None, None, str(e)
 
 
 # =========================================================
@@ -278,11 +298,24 @@ if fuente_excel is None:
       " cargador de la barra lateral izquierda."
   )
 else:
-  df_partidos, df_tabla, df_geo, error = cargar_datos_excel(fuente_excel)
+  df_partidos, df_acum, df_claus, df_geo, error = cargar_datos_excel(
+      fuente_excel
+  )
 
   if error:
     st.error(f"Error al procesar la estructura del Excel: {error}")
   else:
+    # Selección de Tabla de referencia para el modelo
+    tabla_ref = st.sidebar.radio(
+        "Tabla de Rendimiento:",
+        ("Tabla Acumulada", "Tabla Clausura"),
+        index=0,
+    )
+
+    df_tabla_act = (
+        df_acum if tabla_ref == "Tabla Acumulada" else df_claus
+    )
+
     fechas_disponibles = sorted(df_partidos["fecha"].unique())
     fecha_sel = st.sidebar.selectbox(
         "Seleccionar Fecha de la Liga 1:", fechas_disponibles
@@ -290,7 +323,7 @@ else:
 
     df_f = df_partidos[df_partidos["fecha"] == fecha_sel]
 
-    st.subheader(f"Pronósticos para la Fecha {fecha_sel}")
+    st.subheader(f"Pronósticos para la Fecha {fecha_sel} ({tabla_ref})")
 
     for idx, row in df_f.iterrows():
       eq_loc_std = row["local_std"]
@@ -300,7 +333,7 @@ else:
       nombre_vis_orig = row["visita"]
 
       p_loc, p_emp, p_vis, p_over, p_btts, matriz = calcular_dixon_coles(
-          eq_loc_std, eq_vis_std, df_tabla, df_geo
+          eq_loc_std, eq_vis_std, df_tabla_act, df_geo
       )
 
       # Sugerencia de apuesta
