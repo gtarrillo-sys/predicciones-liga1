@@ -94,19 +94,15 @@ def estandarizar_nombre(nombre):
 
 
 def resolver_columna_club(df):
-  """Mapea dinámicamente la columna 'club' o sus variantes a 'club'."""
-  cols_map = {str(c).strip().lower(): c for c in df.columns}
+  """Asegura que la columna donde están los nombres de clubes se identifique como 'club'."""
   df.columns = [str(c).strip().lower() for c in df.columns]
-
   posibles = ["club", "equipo", "nombre", "team", "clubes", "equipos"]
   for pos in posibles:
     if pos in df.columns:
       df = df.rename(columns={pos: "club"})
       break
-
   if "club" not in df.columns:
     df["club"] = df.iloc[:, 0]
-
   return df
 
 
@@ -124,15 +120,27 @@ def cargar_datos_excel(fuente_archivo):
     xls = pd.ExcelFile(fuente_archivo)
     pestanas = xls.sheet_names
 
-    # 1. Partidos (Usa 'local' y 'visita')
+    # 1. Partidos (Lectura de 'local' y 'visita')
     df_partidos = pd.read_excel(xls, sheet_name="Partidos_Fecha")
     df_partidos.columns = df_partidos.columns.str.strip().str.lower()
+
+    # Formateo limpio del campo fecha
+    if "fecha" in df_partidos.columns:
+      try:
+        df_partidos["fecha_fmt"] = pd.to_datetime(
+            df_partidos["fecha"]
+        ).dt.strftime("%Y-%m-%d")
+      except Exception:
+        df_partidos["fecha_fmt"] = df_partidos["fecha"].astype(str)
+    else:
+      df_partidos["fecha_fmt"] = "Fecha Única"
+
     df_partidos["local_std"] = df_partidos["local"].apply(estandarizar_nombre)
     df_partidos["visita_std"] = df_partidos["visita"].apply(
         estandarizar_nombre
     )
 
-    # 2. Data Geográfica (Usa 'club')
+    # 2. Data Geográfica (Lectura con 'club')
     if "Data_Geografica" in pestanas:
       df_geo = pd.read_excel(xls, sheet_name="Data_Geografica")
       df_geo = resolver_columna_club(df_geo)
@@ -142,14 +150,14 @@ def cargar_datos_excel(fuente_archivo):
           list(ALTITUDES_DEFAULT.items()), columns=["equipo_std", "altitud"]
       )
 
-    # 3. Tabla Acumulada (Usa 'club')
+    # 3. Tabla Acumulada (Lectura con 'club')
     df_acumulada = pd.read_excel(xls, sheet_name="Tabla_Acumulada")
     df_acumulada = resolver_columna_club(df_acumulada)
     df_acumulada["equipo_std"] = df_acumulada["club"].apply(
         estandarizar_nombre
     )
 
-    # 4. Tabla Clausura (Usa 'club') - Opcional
+    # 4. Tabla Clausura (Lectura con 'club')
     if "Tabla_Clausura" in pestanas:
       df_clausura = pd.read_excel(xls, sheet_name="Tabla_Clausura")
       df_clausura = resolver_columna_club(df_clausura)
@@ -305,7 +313,6 @@ else:
   if error:
     st.error(f"Error al procesar la estructura del Excel: {error}")
   else:
-    # Selección de Tabla de referencia para el modelo
     tabla_ref = st.sidebar.radio(
         "Tabla de Rendimiento:",
         ("Tabla Acumulada", "Tabla Clausura"),
@@ -316,12 +323,12 @@ else:
         df_acum if tabla_ref == "Tabla Acumulada" else df_claus
     )
 
-    fechas_disponibles = sorted(df_partidos["fecha"].unique())
+    fechas_disponibles = sorted(df_partidos["fecha_fmt"].unique())
     fecha_sel = st.sidebar.selectbox(
         "Seleccionar Fecha de la Liga 1:", fechas_disponibles
     )
 
-    df_f = df_partidos[df_partidos["fecha"] == fecha_sel]
+    df_f = df_partidos[df_partidos["fecha_fmt"] == fecha_sel]
 
     st.subheader(f"Pronósticos para la Fecha {fecha_sel} ({tabla_ref})")
 
