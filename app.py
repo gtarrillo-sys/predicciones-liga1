@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 # =========================================================
-# 1. DICCIONARIO Y NORMALIZACIÓN ROBUSTA DE NOMBRES
+# 1. DICCIONARIOS Y NORMALIZACIÓN ROBUSTA DE NOMBRES
 # =========================================================
 DICCIONARIO_EQUIPOS = {
     # Juan Pablo II
@@ -56,6 +56,27 @@ DICCIONARIO_EQUIPOS = {
     "utc cajamarca": "ut c",
     "adt": "adt",
     "adt de tarma": "adt",
+    "cienciano": "cienciano",
+}
+
+# Altitudes por defecto si fallara la lectura de la hoja
+ALTITUDES_DEFAULT = {
+    "adt": 3050,
+    "cienciano": 3360,
+    "cusco": 3360,
+    "garcilaso": 3360,
+    "sport huancayo": 3250,
+    "los chankas": 2900,
+    "ut c": 2750,
+    "comerciantes unidos": 2650,
+    "melgar": 2335,
+    "universitario": 150,
+    "alianza lima": 150,
+    "sporting cristal": 150,
+    "sport boys": 10,
+    "atletico grau": 30,
+    "alianza atletico": 60,
+    "colegio juan pablo ii": 30,
 }
 
 
@@ -77,7 +98,6 @@ def estandarizar_nombre(nombre):
 # 2. CARGA DE DATOS DESDE EXCEL
 # =========================================================
 def obtener_ruta_excel(nombre_archivo="Liga1_2026.xlsx"):
-  """Obtiene la ruta absoluta del archivo Excel en la carpeta del script."""
   directorio_actual = os.path.dirname(os.path.abspath(__file__))
   return os.path.join(directorio_actual, nombre_archivo)
 
@@ -86,25 +106,38 @@ def obtener_ruta_excel(nombre_archivo="Liga1_2026.xlsx"):
 def cargar_datos_excel(fuente_archivo):
   try:
     xls = pd.ExcelFile(fuente_archivo)
+    pestanas_disponibles = xls.sheet_names
 
-    # Carga de pestañas
+    # Carga de partidos y tabla
     df_partidos = pd.read_excel(xls, sheet_name="Partidos_Fecha")
     df_tabla = pd.read_excel(xls, sheet_name="Tabla_Acumulada")
-    df_geo = pd.read_excel(xls, sheet_name="Geo_Info")
 
-    # Limpieza de columnas
+    # Lectura flexible de la hoja geográfica (Data_Geografica, Geo_Info o fallback)
+    nombre_hoja_geo = None
+    for posible in ["Data_Geografica", "Geo_Info", "Geografia", "Geo"]:
+      if posible in pestanas_disponibles:
+        nombre_hoja_geo = posible
+        break
+
+    if nombre_hoja_geo:
+      df_geo = pd.read_excel(xls, sheet_name=nombre_hoja_geo)
+      df_geo.columns = df_geo.columns.str.strip().str.lower()
+      df_geo["equipo_std"] = df_geo["equipo"].apply(estandarizar_nombre)
+    else:
+      df_geo = pd.DataFrame(
+          list(ALTITUDES_DEFAULT.items()), columns=["equipo_std", "altitud"]
+      )
+
+    # Limpieza de columnas principales
     df_partidos.columns = df_partidos.columns.str.strip().str.lower()
     df_tabla.columns = df_tabla.columns.str.strip().str.lower()
-    df_geo.columns = df_geo.columns.str.strip().str.lower()
 
     # Estandarización de nombres
     df_partidos["local_std"] = df_partidos["local"].apply(estandarizar_nombre)
     df_partidos["visita_std"] = df_partidos["visita"].apply(
         estandarizar_nombre
     )
-
     df_tabla["equipo_std"] = df_tabla["equipo"].apply(estandarizar_nombre)
-    df_geo["equipo_std"] = df_geo["equipo"].apply(estandarizar_nombre)
 
     return df_partidos, df_tabla, df_geo, None
   except Exception as e:
@@ -131,7 +164,7 @@ def obtener_altitud(equipo, df_geo):
   row = df_geo[df_geo["equipo_std"] == equipo]
   if not row.empty and "altitud" in row.columns:
     return float(row["altitud"].values[0])
-  return 150.0
+  return ALTITUDES_DEFAULT.get(equipo, 150.0)
 
 
 # =========================================================
@@ -217,13 +250,11 @@ def calcular_dixon_coles(
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 st.caption("Ajustado por Dixon-Coles y Factor de Altitud Real")
 
-# Opción en barra lateral para subir el archivo manualmente
 st.sidebar.header("📁 Archivo de Datos")
 archivo_subido = st.sidebar.file_uploader(
     "Subir archivo Excel (Liga1_2026.xlsx)", type=["xlsx"]
 )
 
-# Búsqueda local de Liga1_2026.xlsx
 ruta_local = obtener_ruta_excel("Liga1_2026.xlsx")
 
 if archivo_subido is not None:
@@ -233,7 +264,6 @@ elif os.path.exists(ruta_local):
 else:
   fuente_excel = None
 
-# Botón para recargar la memoria caché
 if st.sidebar.button("🔄 Recargar Datos"):
   st.cache_data.clear()
   st.rerun()
