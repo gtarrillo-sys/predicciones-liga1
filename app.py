@@ -76,10 +76,13 @@ DICCIONARIO_EQUIPOS = {
     "deporte huancayo": "sport huancayo",
     "sport huancayo": "sport huancayo",
     "fc cajamarca": "ut c",
+    "utc cajamarca": "ut c",
     "utc": "ut c",
     "ut c": "ut c",
     "adt": "adt",
     "cienciano": "cienciano",
+    "club cienciano": "cienciano",
+    "cd moquegua": "cd moquegua",
 }
 
 ALTITUDES_DEFAULT = {
@@ -88,17 +91,18 @@ ALTITUDES_DEFAULT = {
     "cusco": (3360, "Cusco"),
     "garcilaso": (3360, "Cusco"),
     "sport huancayo": (3250, "Huancayo"),
-    "los chankas": (2900, "Andahuaylas"),
+    "los chankas": (2920, "Andahuaylas"),
     "ut c": (2750, "Cajamarca"),
-    "comerciantes unidos": (2650, "Cutervo"),
+    "comerciantes unidos": (2620, "Cutervo"),
     "melgar": (2335, "Arequipa"),
     "universitario": (150, "Lima"),
     "alianza lima": (150, "Lima"),
     "sporting cristal": (150, "Lima"),
     "sport boys": (10, "Callao"),
-    "atletico grau": (30, "Piura"),
-    "alianza atletico": (60, "Sullana"),
+    "atletico grau": (50, "Piura"),
+    "alianza atletico": (50, "Sullana"),
     "colegio juan pablo ii": (150, "Chongoyape"),
+    "cd moquegua": (1410, "Moquegua"),
 }
 
 def estandarizar_nombre(nombre):
@@ -136,15 +140,17 @@ def cargar_datos_excel(fuente_archivo):
         df_partidos = pd.read_excel(xls, sheet_name="Partidos_Fecha")
         df_partidos.columns = df_partidos.columns.str.strip().str.lower()
         
-        # Formateo de Fecha y Jornada
-        if "fecha" in df_partidos.columns:
-            df_partidos["fecha_num"] = df_partidos["fecha"].astype(str).str.extract(r"(\d+)").fillna("8")
-            try:
-                df_partidos["fecha_str"] = pd.to_datetime(df_partidos["fecha"]).dt.strftime("%Y-%m-%d")
-            except Exception:
-                df_partidos["fecha_str"] = df_partidos["fecha"].astype(str)
+        # Extracción limpia basada en la columna 'jornada' de tu Excel
+        if "jornada" in df_partidos.columns:
+            df_partidos["jornada_num"] = df_partidos["jornada"].astype(str).str.extract(r"(\d+)")[0].fillna("8")
+        elif "fecha_num" in df_partidos.columns:
+            df_partidos["jornada_num"] = df_partidos["fecha_num"].astype(str)
         else:
-            df_partidos["fecha_num"] = "8"
+            df_partidos["jornada_num"] = "8"
+
+        if "fecha" in df_partidos.columns:
+            df_partidos["fecha_str"] = df_partidos["fecha"].astype(str)
+        else:
             df_partidos["fecha_str"] = "2026-09-06"
 
         if "hora" not in df_partidos.columns:
@@ -153,7 +159,6 @@ def cargar_datos_excel(fuente_archivo):
         df_partidos["local_std"] = df_partidos["local"].apply(estandarizar_nombre)
         df_partidos["visita_std"] = df_partidos["visita"].apply(estandarizar_nombre)
 
-        # Garantizar columnas de marcadores para actualización
         if "goles_local" not in df_partidos.columns:
             df_partidos["goles_local"] = np.nan
         if "goles_visita" not in df_partidos.columns:
@@ -297,17 +302,23 @@ else:
         tabla_ref = st.sidebar.radio("Tabla de Rendimiento:", ("Tabla Acumulada", "Tabla Clausura"), index=0)
         df_tabla_act = df_acum if tabla_ref == "Tabla Acumulada" else df_claus
 
-        fechas_disponibles = sorted(df_partidos["fecha_num"].unique(), key=lambda x: int(x) if x.isdigit() else 0)
-        idx_defecto = fechas_disponibles.index("8") if "8" in fechas_disponibles else 0
-        fecha_sel = st.sidebar.selectbox("Seleccionar Fecha / Jornada:", fechas_disponibles, index=idx_defecto)
+        # Listado dinámico de jornadas ordenadas numéricamente (8, 9, etc.)
+        jornadas_raw = sorted(df_partidos["jornada_num"].unique(), key=lambda x: int(x) if str(x).isdigit() else 0)
+        
+        idx_defecto = jornadas_raw.index("8") if "8" in jornadas_raw else 0
+        jornada_sel = st.sidebar.selectbox(
+            "Seleccionar Jornada:",
+            options=jornadas_raw,
+            format_func=lambda x: f"Jornada {x}",
+            index=idx_defecto
+        )
 
-        df_f = df_partidos[df_partidos["fecha_num"] == fecha_sel]
+        df_f = df_partidos[df_partidos["jornada_num"] == jornada_sel]
 
-        # Pestañas para separar la visualización exacta de la actualización avanzada
-        tab_partidos, tab_actualizar = st.tabs(["📊 Pronósticos Fecha " + str(fecha_sel), "📝 Actualizar Resultados y Marcadores"])
+        tab_partidos, tab_actualizar = st.tabs([f"📊 Pronósticos Jornada {jornada_sel}", "📝 Actualizar Resultados y Marcadores"])
 
         with tab_partidos:
-            st.subheader(f"Fecha {fecha_sel} - Partidos y Pronósticos ({tabla_ref})")
+            st.subheader(f"Jornada {jornada_sel} - Partidos y Pronósticos ({tabla_ref})")
 
             for idx, row in df_f.iterrows():
                 eq_loc_std = row["local_std"]
@@ -315,14 +326,13 @@ else:
 
                 nombre_loc = row["local"]
                 nombre_vis = row["visita"]
-                fecha_partido = row.get("fecha_str", "2026-09-06")
-                hora_partido = row.get("hora", "15:00")
+                fecha_partido = str(row.get("fecha_str", "2026-09-06")).split(" ")[0]
+                hora_partido = str(row.get("hora", "15:00"))
 
                 p_loc, p_emp, p_vis, p_over, p_under, p_btts_si, p_btts_no, altitud, ciudad = calcular_dixon_coles(
                     eq_loc_std, eq_vis_std, df_tabla_act, df_geo
                 )
 
-                # Sugerencias
                 if p_loc >= 0.40 and (p_loc - p_vis) >= 0.08:
                     sug_1x2 = f"Gana {nombre_loc}"
                     conf_1x2 = "Alta" if p_loc >= 0.52 else "Media-Alta"
@@ -342,10 +352,9 @@ else:
                 sug_btts = "Ambos Equipos SÍ Anotan (Sí)" if p_btts_si > p_btts_no else "Ambos Equipos NO Anotan (No)"
                 conf_btts = "Media" if max(p_btts_si, p_btts_no) < 0.60 else "Alta"
 
-                # Tarjeta UI Réplica de la Imagen
                 with st.container():
                     st.markdown(f"### 🏟️ {nombre_loc} vs {nombre_vis} | {ciudad} ({int(altitud)} msnm)")
-                    st.caption(f"📅 {fecha_partido} - 🕒 {hora_partido}")
+                    st.caption(f"📅 Fecha: {fecha_partido} - 🕒 Hora: {hora_partido}")
 
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -399,10 +408,9 @@ else:
                     st.divider()
 
         with tab_actualizar:
-            st.subheader(f"⚙️ Panel de Actualización de Marcadores - Fecha {fecha_sel}")
+            st.subheader(f"⚙️ Panel de Actualización de Marcadores - Jornada {jornada_sel}")
             st.info("Ingresa los marcadores reales para actualizar la base de datos y recalcular métricas.")
 
-            con_cambios = False
             for idx, row in df_f.iterrows():
                 c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 3, 2])
                 with c1:
@@ -418,11 +426,9 @@ else:
                 with c5:
                     jugado = st.checkbox("Jugado", value=bool(row["jugado"]), key=f"jug_{idx}")
 
-                if g_loc != row["goles_local"] or g_vis != row["goles_visita"] or jugado != row["jugado"]:
-                    df_partidos.loc[idx, "goles_local"] = g_loc
-                    df_partidos.loc[idx, "goles_visita"] = g_vis
-                    df_partidos.loc[idx, "jugado"] = jugado
-                    con_cambios = True
+                df_partidos.loc[idx, "goles_local"] = g_loc
+                df_partidos.loc[idx, "goles_visita"] = g_vis
+                df_partidos.loc[idx, "jugado"] = jugado
 
             st.write("")
             if st.button("💾 Guardar Marcadores y Recalcular Excel"):
