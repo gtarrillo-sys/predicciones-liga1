@@ -1,6 +1,7 @@
 import os
 import re
 import unicodedata
+import io
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson
@@ -129,13 +130,12 @@ def resolver_columna_club(df):
     return df
 
 # =========================================================
-# 2. CARGA Y GUARDA DE DATOS
+# 2. CARGA Y GUARDA DE DATOS CON MANEJO DE SESSION_STATE
 # =========================================================
 def obtener_ruta_excel(nombre_archivo="Liga1_2026.xlsx"):
     directorio_actual = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(directorio_actual, nombre_archivo)
 
-@st.cache_data(ttl=60)
 def cargar_datos_excel(fuente_archivo):
     try:
         xls = pd.ExcelFile(fuente_archivo)
@@ -144,7 +144,6 @@ def cargar_datos_excel(fuente_archivo):
         df_partidos = pd.read_excel(xls, sheet_name="Partidos_Fecha")
         df_partidos.columns = df_partidos.columns.str.strip().str.lower()
         
-        # Extracción limpia de la columna 'jornada' sin confundirse con 'fecha'
         if "jornada" in df_partidos.columns:
             df_partidos["jornada_num"] = df_partidos["jornada"].astype(str).str.extract(r"(\d+)")[0].fillna("8")
         elif "fecha_num" in df_partidos.columns:
@@ -194,6 +193,16 @@ def cargar_datos_excel(fuente_archivo):
     except Exception as e:
         return None, None, None, None, str(e)
 
+def generar_bytes_excel(df_partidos, df_acumulada, df_clausura, df_geo):
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df_partidos.to_excel(writer, sheet_name="Partidos_Fecha", index=False)
+        df_acumulada.to_excel(writer, sheet_name="Tabla_Acumulada", index=False)
+        df_clausura.to_excel(writer, sheet_name="Tabla_Clausura", index=False)
+        df_geo.to_excel(writer, sheet_name="Data_Geografica", index=False)
+    buffer.seek(0)
+    return buffer
+
 def guardar_cambios_excel(df_partidos, df_acumulada, df_clausura, df_geo, ruta):
     try:
         with pd.ExcelWriter(ruta, engine="openpyxl") as writer:
@@ -201,7 +210,7 @@ def guardar_cambios_excel(df_partidos, df_acumulada, df_clausura, df_geo, ruta):
             df_acumulada.to_excel(writer, sheet_name="Tabla_Acumulada", index=False)
             df_clausura.to_excel(writer, sheet_name="Tabla_Clausura", index=False)
             df_geo.to_excel(writer, sheet_name="Data_Geografica", index=False)
-        return True, "Cambios guardados con éxito en el archivo Excel."
+        return True, "Cambios guardados con éxito en el archivo Excel local."
     except Exception as e:
         return False, str(e)
 
@@ -294,131 +303,137 @@ ruta_local = obtener_ruta_excel("Liga1_2026.xlsx")
 fuente_excel = archivo_subido if archivo_subido is not None else (ruta_local if os.path.exists(ruta_local) else None)
 
 if st.sidebar.button("🔄 Recargar Datos"):
-    st.cache_data.clear()
+    st.session_state.clear()
     st.rerun()
 
 if fuente_excel is None:
-    st.error("❌ No se encontró el archivo 'Liga1_2026.xlsx'.")
+    st.error("❌ No se encontró el archivo 'Liga1_2026.xlsx'. Por favor sube el archivo Excel en el menú lateral.")
 else:
-    df_partidos, df_acum, df_claus, df_geo, error = cargar_datos_excel(fuente_excel)
+    if "df_partidos" not in st.session_state or archivo_subido is not None:
+        df_p, df_a, df_c, df_g, err = cargar_datos_excel(fuente_excel)
+        if err:
+            st.error(f"Error al procesar la estructura del Excel: {err}")
+            st.stop()
+        st.session_state.df_partidos = df_p
+        st.session_state.df_acum = df_a
+        st.session_state.df_claus = df_c
+        st.session_state.df_geo = df_g
 
-    if error:
-        st.error(f"Error al procesar la estructura del Excel: {error}")
-    else:
-        tabla_ref = st.sidebar.radio("Tabla de Rendimiento:", ("Tabla Acumulada", "Tabla Clausura"), index=0)
-        df_tabla_act = df_acum if tabla_ref == "Tabla Acumulada" else df_claus
+    tabla_ref = st.sidebar.radio("Tabla de Rendimiento:", ("Tabla Acumulada", "Tabla Clausura"), index=0)
+    df_tabla_act = st.session_state.df_acum if tabla_ref == "Tabla Acumulada" else st.session_state.df_claus
 
-        # Listado dinámico de jornadas
-        jornadas_raw = sorted(df_partidos["jornada_num"].unique(), key=lambda x: int(x) if str(x).isdigit() else 0)
-        idx_defecto = jornadas_raw.index("8") if "8" in jornadas_raw else 0
-        jornada_sel = st.sidebar.selectbox(
-            "Seleccionar Jornada:",
-            options=jornadas_raw,
-            format_func=lambda x: f"Jornada {x}",
-            index=idx_defecto
-        )
+    # Listado dinámico de jornadas
+    jornadas_raw = sorted(st.session_state.df_partidos["jornada_num"].unique(), key=lambda x: int(x) if str(x).isdigit() else 0)
+    idx_defecto = jornadas_raw.index("8") if "8" in jornadas_raw else 0
+    jornada_sel = st.sidebar.selectbox(
+        "Seleccionar Jornada:",
+        options=jornadas_raw,
+        format_func=lambda x: f"Jornada {x}",
+        index=idx_defecto
+    )
 
-        # Filtrar limpiando el índice
-        df_f = df_partidos[df_partidos["jornada_num"].astype(str) == str(jornada_sel)].copy()
-        df_f = df_f.reset_index(drop=True)
+    df_f = st.session_state.df_partidos[st.session_state.df_partidos["jornada_num"].astype(str) == str(jornada_sel)].copy()
+    df_f = df_f.reset_index(drop=True)
 
-        tab_partidos, tab_actualizar = st.tabs([f"📊 Pronósticos Jornada {jornada_sel}", "📝 Actualizar Resultados y Marcadores"])
+    tab_partidos, tab_actualizar = st.tabs([f"📊 Pronósticos Jornada {jornada_sel}", "📝 Actualizar Resultados y Marcadores"])
 
-        with tab_partidos:
-            st.subheader(f"Jornada {jornada_sel} - Partidos y Pronósticos ({tabla_ref})")
+    with tab_partidos:
+        st.subheader(f"Jornada {jornada_sel} - Partidos y Pronósticos ({tabla_ref})")
 
-            for idx in range(len(df_f)):
-                row = df_f.iloc[idx]
-                eq_loc_std = row["local_std"]
-                eq_vis_std = row["visita_std"]
+        for idx in range(len(df_f)):
+            row = df_f.iloc[idx]
+            eq_loc_std = row["local_std"]
+            eq_vis_std = row["visita_std"]
 
-                nombre_loc = str(row["local"]).strip()
-                nombre_vis = str(row["visita"]).strip()
-                fecha_partido = str(row.get("fecha_str", "2026-09-06")).split(" ")[0]
-                hora_partido = str(row.get("hora", "15:00"))
+            nombre_loc = str(row["local"]).strip()
+            nombre_vis = str(row["visita"]).strip()
+            fecha_partido = str(row.get("fecha_str", "2026-09-06")).split(" ")[0]
+            hora_partido = str(row.get("hora", "15:00"))
 
-                p_loc, p_emp, p_vis, p_over, p_under, p_btts_si, p_btts_no, altitud, ciudad = calcular_dixon_coles(
-                    eq_loc_std, eq_vis_std, df_tabla_act, df_geo
-                )
+            p_loc, p_emp, p_vis, p_over, p_under, p_btts_si, p_btts_no, altitud, ciudad = calcular_dixon_coles(
+                eq_loc_std, eq_vis_std, df_tabla_act, st.session_state.df_geo
+            )
 
-                if p_loc >= 0.40 and (p_loc - p_vis) >= 0.08:
-                    sug_1x2 = f"Gana {nombre_loc}"
-                    conf_1x2 = "Alta" if p_loc >= 0.52 else "Media-Alta"
-                elif p_vis >= 0.40 and (p_vis - p_loc) >= 0.08:
-                    sug_1x2 = f"Gana {nombre_vis}"
-                    conf_1x2 = "Alta" if p_vis >= 0.52 else "Media-Alta"
-                elif (p_loc + p_emp) >= 0.62:
-                    sug_1x2 = f"Empate o Visita ({nombre_vis})" if p_vis > p_loc else f"Local o Empate ({nombre_loc})"
-                    conf_1x2 = "Media-Alta"
-                else:
-                    sug_1x2 = "Doble Opción"
-                    conf_1x2 = "Media"
+            if p_loc >= 0.40 and (p_loc - p_vis) >= 0.08:
+                sug_1x2 = f"Gana {nombre_loc}"
+                conf_1x2 = "Alta" if p_loc >= 0.52 else "Media-Alta"
+            elif p_vis >= 0.40 and (p_vis - p_loc) >= 0.08:
+                sug_1x2 = f"Gana {nombre_vis}"
+                conf_1x2 = "Alta" if p_vis >= 0.52 else "Media-Alta"
+            elif (p_loc + p_emp) >= 0.62:
+                sug_1x2 = f"Empate o Visita ({nombre_vis})" if p_vis > p_loc else f"Local o Empate ({nombre_loc})"
+                conf_1x2 = "Media-Alta"
+            else:
+                sug_1x2 = "Doble Opción"
+                conf_1x2 = "Media"
 
-                sug_goles = "Más de 2.5 Goles (+2.5)" if p_over > p_under else "Menos de 2.5 Goles (-2.5)"
-                conf_goles = "Alta" if max(p_over, p_under) >= 0.60 else "Media"
+            sug_goles = "Más de 2.5 Goles (+2.5)" if p_over > p_under else "Menos de 2.5 Goles (-2.5)"
+            conf_goles = "Alta" if max(p_over, p_under) >= 0.60 else "Media"
 
-                sug_btts = "Ambos Equipos SÍ Anotan (Sí)" if p_btts_si > p_btts_no else "Ambos Equipos NO Anotan (No)"
-                conf_btts = "Media" if max(p_btts_si, p_btts_no) < 0.60 else "Alta"
+            sug_btts = "Ambos Equipos SÍ Anotan (Sí)" if p_btts_si > p_btts_no else "Ambos Equipos NO Anotan (No)"
+            conf_btts = "Media" if max(p_btts_si, p_btts_no) < 0.60 else "Alta"
 
-                with st.container():
-                    st.markdown(f"### 🏟️ {nombre_loc} vs {nombre_vis} | {ciudad} ({int(altitud)} msnm)")
-                    st.caption(f"📅 Fecha: {fecha_partido} - 🕒 Hora: {hora_partido}")
+            with st.container():
+                st.markdown(f"### 🏟️ {nombre_loc} vs {nombre_vis} | {ciudad} ({int(altitud)} msnm)")
+                st.caption(f"📅 Fecha: {fecha_partido} - 🕒 Hora: {hora_partido}")
 
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        st.write(f"**Gana {nombre_loc}**")
-                        st.title(f"{p_loc * 100:.1f}%")
-                        st.caption(f"↑ Cuota Justa: {1 / max(p_loc, 0.001):.2f}")
-                    with c2:
-                        st.write("**Empate**")
-                        st.title(f"{p_emp * 100:.1f}%")
-                        st.caption(f"↑ Cuota Justa: {1 / max(p_emp, 0.001):.2f}")
-                    with c3:
-                        st.write(f"**Gana {nombre_vis}**")
-                        st.title(f"{p_vis * 100:.1f}%")
-                        st.caption(f"↑ Cuota Justa: {1 / max(p_vis, 0.001):.2f}")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.write(f"**Gana {nombre_loc}**")
+                    st.title(f"{p_loc * 100:.1f}%")
+                    st.caption(f"↑ Cuota Justa: {1 / max(p_loc, 0.001):.2f}")
+                with c2:
+                    st.write("**Empate**")
+                    st.title(f"{p_emp * 100:.1f}%")
+                    st.caption(f"↑ Cuota Justa: {1 / max(p_emp, 0.001):.2f}")
+                with c3:
+                    st.write(f"**Gana {nombre_vis}**")
+                    st.title(f"{p_vis * 100:.1f}%")
+                    st.caption(f"↑ Cuota Justa: {1 / max(p_vis, 0.001):.2f}")
 
-                    s1, s2 = st.columns([2, 1])
-                    with s1:
-                        st.markdown(f"<div class='suggestion-box-blue'><b>Pronóstico Sugerido (1X2):</b> {sug_1x2}</div>", unsafe_allow_html=True)
-                    with s2:
-                        st.markdown(f"<div class='suggestion-box-green'><b>Nivel de Confianza:</b> {conf_1x2}</div>", unsafe_allow_html=True)
+                s1, s2 = st.columns([2, 1])
+                with s1:
+                    st.markdown(f"<div class='suggestion-box-blue'><b>Pronóstico Sugerido (1X2):</b> {sug_1x2}</div>", unsafe_allow_html=True)
+                with s2:
+                    st.markdown(f"<div class='suggestion-box-green'><b>Nivel de Confianza:</b> {conf_1x2}</div>", unsafe_allow_html=True)
 
-                    st.write("")
-                    col_goles, col_btts = st.columns(2)
+                st.write("")
+                col_goles, col_btts = st.columns(2)
 
-                    with col_goles:
-                        st.markdown("#### ⚽ Mercado de Goles (Over / Under 2.5)")
-                        st.write(f"**Más de 2.5 Goles:** {p_over * 100:.1f}%")
-                        st.progress(float(p_over))
-                        st.caption(f"Cuota Justa Over: {1 / max(p_over, 0.001):.2f}")
+                with col_goles:
+                    st.markdown("#### ⚽ Mercado de Goles (Over / Under 2.5)")
+                    st.write(f"**Más de 2.5 Goles:** {p_over * 100:.1f}%")
+                    st.progress(float(p_over))
+                    st.caption(f"Cuota Justa Over: {1 / max(p_over, 0.001):.2f}")
 
-                        st.write(f"**Menos de 2.5 Goles:** {p_under * 100:.1f}%")
-                        st.progress(float(p_under))
-                        st.caption(f"Cuota Justa Under: {1 / max(p_under, 0.001):.2f}")
+                    st.write(f"**Menos de 2.5 Goles:** {p_under * 100:.1f}%")
+                    st.progress(float(p_under))
+                    st.caption(f"Cuota Justa Under: {1 / max(p_under, 0.001):.2f}")
 
-                        st.markdown(f"<div class='suggestion-box-blue'><b>Pronóstico Sugerido:</b> {sug_goles}</div>", unsafe_allow_html=True)
-                        st.caption(f"🎯 Nivel de Confianza: {conf_goles}")
+                    st.markdown(f"<div class='suggestion-box-blue'><b>Pronóstico Sugerido:</b> {sug_goles}</div>", unsafe_allow_html=True)
+                    st.caption(f"🎯 Nivel de Confianza: {conf_goles}")
 
-                    with col_btts:
-                        st.markdown("#### 🔥 Ambos Equipos Anotan (BTTS)")
-                        st.write(f"**Sí Anotan Ambos:** {p_btts_si * 100:.1f}%")
-                        st.progress(float(p_btts_si))
-                        st.caption(f"Cuota Justa Sí: {1 / max(p_btts_si, 0.001):.2f}")
+                with col_btts:
+                    st.markdown("#### 🔥 Ambos Equipos Anotan (BTTS)")
+                    st.write(f"**Sí Anotan Ambos:** {p_btts_si * 100:.1f}%")
+                    st.progress(float(p_btts_si))
+                    st.caption(f"Cuota Justa Sí: {1 / max(p_btts_si, 0.001):.2f}")
 
-                        st.write(f"**No Anotan Ambos:** {p_btts_no * 100:.1f}%")
-                        st.progress(float(p_btts_no))
-                        st.caption(f"Cuota Justa No: {1 / max(p_btts_no, 0.001):.2f}")
+                    st.write(f"**No Anotan Ambos:** {p_btts_no * 100:.1f}%")
+                    st.progress(float(p_btts_no))
+                    st.caption(f"Cuota Justa No: {1 / max(p_btts_no, 0.001):.2f}")
 
-                        st.markdown(f"<div class='suggestion-box-blue'><b>Pronóstico Sugerido:</b> {sug_btts}</div>", unsafe_allow_html=True)
-                        st.caption(f"🎯 Nivel de Confianza: {conf_btts}")
+                    st.markdown(f"<div class='suggestion-box-blue'><b>Pronóstico Sugerido:</b> {sug_btts}</div>", unsafe_allow_html=True)
+                    st.caption(f"🎯 Nivel de Confianza: {conf_btts}")
 
-                    st.divider()
+                st.divider()
 
-        with tab_actualizar:
-            st.subheader(f"⚙️ Panel de Actualización de Marcadores - Jornada {jornada_sel}")
-            st.info("Ingresa los marcadores reales para actualizar la base de datos.")
+    with tab_actualizar:
+        st.subheader(f"⚙️ Panel de Actualización de Marcadores - Jornada {jornada_sel}")
+        st.info("Ingresa los marcadores reales para actualizar la base de datos.")
 
+        with st.form(key=f"form_jornada_{jornada_sel}"):
+            actualizaciones = []
             for idx in range(len(df_f)):
                 row = df_f.iloc[idx]
                 c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 3, 2])
@@ -426,29 +441,55 @@ else:
                     st.write(f"**{row['local']}**")
                 with c2:
                     val_loc = int(row["goles_local"]) if pd.notnull(row["goles_local"]) else 0
-                    g_loc = st.number_input(f"GL_{idx}", min_value=0, max_value=15, value=val_loc, key=f"gl_{idx}", label_visibility="collapsed")
+                    g_loc = st.number_input(f"GL_{idx}", min_value=0, max_value=15, value=val_loc, key=f"gl_{jornada_sel}_{idx}", label_visibility="collapsed")
                 with c3:
                     val_vis = int(row["goles_visita"]) if pd.notnull(row["goles_visita"]) else 0
-                    g_vis = st.number_input(f"GV_{idx}", min_value=0, max_value=15, value=val_vis, key=f"gv_{idx}", label_visibility="collapsed")
+                    g_vis = st.number_input(f"GV_{idx}", min_value=0, max_value=15, value=val_vis, key=f"gv_{jornada_sel}_{idx}", label_visibility="collapsed")
                 with c4:
                     st.write(f"**{row['visita']}**")
                 with c5:
-                    jugado = st.checkbox("Jugado", value=bool(row["jugado"]), key=f"jug_{idx}")
+                    jugado = st.checkbox("Jugado", value=bool(row["jugado"]), key=f"jug_{jornada_sel}_{idx}")
 
-                # Actualizar DataFrame global por coincidencia de fila
-                match_mask = (df_partidos["jornada_num"].astype(str) == str(jornada_sel)) & \
-                             (df_partidos["local"] == row["local"]) & \
-                             (df_partidos["visita"] == row["visita"])
-                df_partidos.loc[match_mask, "goles_local"] = g_loc
-                df_partidos.loc[match_mask, "goles_visita"] = g_vis
-                df_partidos.loc[match_mask, "jugado"] = jugado
+                actualizaciones.append((row["local"], row["visita"], g_loc, g_vis, jugado))
 
-            st.write("")
-            if st.button("💾 Guardar Marcadores y Recalcular Excel"):
-                ok, msg = guardar_cambios_excel(df_partidos, df_acum, df_claus, df_geo, ruta_local)
+            guardar_submit = st.form_submit_button("💾 Aplicar y Guardar Marcadores")
+
+        if guardar_submit:
+            for loc, vis, gl, gv, jug in actualizaciones:
+                mask = (st.session_state.df_partidos["jornada_num"].astype(str) == str(jornada_sel)) & \
+                       (st.session_state.df_partidos["local"] == loc) & \
+                       (st.session_state.df_partidos["visita"] == vis)
+                st.session_state.df_partidos.loc[mask, "goles_local"] = gl
+                st.session_state.df_partidos.loc[mask, "goles_visita"] = gv
+                st.session_state.df_partidos.loc[mask, "jugado"] = jug
+
+            if os.path.exists(ruta_local):
+                ok, msg = guardar_cambios_excel(
+                    st.session_state.df_partidos,
+                    st.session_state.df_acum,
+                    st.session_state.df_claus,
+                    st.session_state.df_geo,
+                    ruta_local
+                )
                 if ok:
-                    st.success(msg)
-                    st.cache_data.clear()
-                    st.rerun()
+                    st.success("¡Datos actualizados localmente en 'Liga1_2026.xlsx' con éxito!")
                 else:
-                    st.error(f"Error al guardar los datos: {msg}")
+                    st.warning(f"No se pudo escribir en disco local ({msg}), pero la sesión está actualizada.")
+            else:
+                st.success("¡Marcadores aplicados correctamente en la sesión activa!")
+            st.rerun()
+
+        st.write("---")
+        st.markdown("#### 📥 Exportar copia de seguridad del Excel")
+        excel_bytes = generar_bytes_excel(
+            st.session_state.df_partidos,
+            st.session_state.df_acum,
+            st.session_state.df_claus,
+            st.session_state.df_geo
+        )
+        st.download_button(
+            label="Descargar Liga1_2026_Actualizado.xlsx",
+            data=excel_bytes,
+            file_name="Liga1_2026_Actualizado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
