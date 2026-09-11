@@ -1,1924 +1,706 @@
 import os
 import re
-import unicodedata
 import io
-
+import unicodedata
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson
 import streamlit as st
 
 # =========================================================
-# CONFIGURACIÓN
+# LIGA 1 PERÚ - MODELO V3
+# Dixon-Coles + Elo + Forma + Altitud + Rivalidad + H2H
 # =========================================================
+
 st.set_page_config(
-    page_title="Predicción Liga 1 Perú - V2",
+    page_title="Predicción Liga 1 Perú - V3",
     page_icon="⚽",
     layout="wide",
 )
 
 st.markdown("""
 <style>
-.metric-card {
-    background-color: #f8f9fa;
-    border-radius: 8px;
-    padding: 15px;
-    margin-bottom: 15px;
-    border: 1px solid #e9ecef;
-}
-.suggestion-box-blue {
-    background-color: #e8f0fe;
-    color: #1a73e8;
-    padding: 12px 16px;
-    border-radius: 8px;
-    font-weight: 500;
-    margin-top: 10px;
-}
-.suggestion-box-green {
-    background-color: #e6f4ea;
-    color: #137333;
-    padding: 12px 16px;
-    border-radius: 8px;
-    font-weight: 500;
-    margin-top: 10px;
-}
+.suggestion-box-blue{background:#e8f0fe;color:#1a73e8;padding:12px 16px;border-radius:8px;font-weight:500;margin-top:10px}
+.suggestion-box-green{background:#e6f4ea;color:#137333;padding:12px 16px;border-radius:8px;font-weight:500;margin-top:10px}
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================================
-# 1. NORMALIZACIÓN DE EQUIPOS
+# 1. NORMALIZACIÓN
 # =========================================================
 def normalizar_texto(texto):
-    if not isinstance(texto, str):
+    if pd.isna(texto):
         return ""
-    texto = unicodedata.normalize("NFD", texto).encode(
-        "ascii", "ignore"
-    ).decode("utf-8")
-    texto = re.sub(r"[^a-zA-Z0-9\s]", " ", texto)
-    return " ".join(texto.lower().split())
-
+    texto = unicodedata.normalize("NFD", str(texto)).encode("ascii","ignore").decode("utf-8")
+    texto = re.sub(r"[^a-zA-Z0-9\s]", " ", texto.lower())
+    return " ".join(texto.split())
 
 # IMPORTANTE:
-# FC Cajamarca y UTC Cajamarca son equipos DIFERENTES.
-# También se conserva "atletico" porque distingue
-# Atlético Grau y Alianza Atlético.
+# FC Cajamarca y UTC son equipos DISTINTOS.
+# Atlético Grau y Alianza Atlético también son DISTINTOS.
 DICCIONARIO_EQUIPOS = {
-    "juan pablo ii college": "colegio juan pablo ii",
-    "juan pablo ii": "colegio juan pablo ii",
-    "colegio juan pablo ii": "colegio juan pablo ii",
-
-    "los chankas": "los chankas",
-    "chankas": "los chankas",
-    "chankas cyc": "los chankas",
-
-    "sporting cristal": "sporting cristal",
-    "cristal": "sporting cristal",
-    "alianza lima": "alianza lima",
-    "universitario": "universitario",
-    "universitario de deportes": "universitario",
-    "sport boys": "sport boys",
-
-    "alianza atletico": "alianza atletico",
-    "alianza atletico sullana": "alianza atletico",
-    "atletico grau": "atletico grau",
-
-    "comerciantes unidos": "comerciantes unidos",
-    "comerciantes unidos de cutervo": "comerciantes unidos",
-
-    "fbc melgar": "melgar",
-    "melgar": "melgar",
-
-    "deportivo garcilaso": "garcilaso",
-    "garcilaso": "garcilaso",
-
-    "cusco fc": "cusco",
-    "cusco": "cusco",
-    "cienciano": "cienciano",
-
-    "deporte huancayo": "sport huancayo",
-    "sport huancayo": "sport huancayo",
-
-    "fc cajamarca": "fc cajamarca",
-    "fc cajamarca futbol club": "fc cajamarca",
-    "utc cajamarca": "utc cajamarca",
-    "utc": "utc cajamarca",
-    "ut c": "utc cajamarca",
-
-    "adt": "adt",
-    "adt tarma": "adt",
-
-    "cd moquegua": "cd moquegua",
-    "moquegua": "cd moquegua",
+    "alianza lima":"alianza lima", "alianza":"alianza lima",
+    "universitario":"universitario",
+    "universitario de deportes":"universitario",
+    "sporting cristal":"sporting cristal", "cristal":"sporting cristal",
+    "sport boys":"sport boys",
+    "atletico grau":"atletico grau", "grau":"atletico grau",
+    "alianza atletico":"alianza atletico",
+    "alianza atletico sullana":"alianza atletico",
+    "cusco fc":"cusco", "cusco":"cusco",
+    "cienciano":"cienciano",
+    "deportivo garcilaso":"garcilaso", "garcilaso":"garcilaso",
+    "fbc melgar":"melgar", "melgar":"melgar",
+    "deporte huancayo":"sport huancayo", "sport huancayo":"sport huancayo",
+    "los chankas":"los chankas", "chankas":"los chankas",
+    "chankas cyc":"los chankas",
+    "fc cajamarca":"fc cajamarca", "fbc cajamarca":"fc cajamarca",
+    "utc cajamarca":"utc", "utc":"utc",
+    "universidad tecnica de cajamarca":"utc", "ut c":"utc",
+    "comerciantes unidos":"comerciantes unidos",
+    "adt":"adt", "asociacion deportiva tarma":"adt",
+    "cd moquegua":"cd moquegua", "deportivo moquegua":"cd moquegua",
+    "moquegua":"cd moquegua",
+    "colegio juan pablo ii":"colegio juan pablo ii",
+    "juan pablo ii":"colegio juan pablo ii",
+    "juan pablo ii college":"colegio juan pablo ii",
 }
-
 
 ALTITUDES_DEFAULT = {
-    "adt": (3050, "Tarma"),
-    "cienciano": (3360, "Cusco"),
-    "cusco": (3360, "Cusco"),
-    "garcilaso": (3360, "Cusco"),
-    "sport huancayo": (3250, "Huancayo"),
-    "los chankas": (2920, "Andahuaylas"),
-    "utc cajamarca": (2750, "Cajamarca"),
-    "fc cajamarca": (2750, "Cajamarca"),
-    "comerciantes unidos": (2620, "Cutervo"),
-    "melgar": (2335, "Arequipa"),
-    "universitario": (150, "Lima"),
-    "alianza lima": (150, "Lima"),
-    "sporting cristal": (150, "Lima"),
-    "sport boys": (10, "Callao"),
-    "atletico grau": (50, "Piura"),
-    "alianza atletico": (50, "Sullana"),
-    "colegio juan pablo ii": (150, "Chongoyape"),
-    "cd moquegua": (1410, "Moquegua"),
+    "adt":(3050,"Tarma"), "cienciano":(3360,"Cusco"),
+    "cusco":(3360,"Cusco"), "garcilaso":(3360,"Cusco"),
+    "sport huancayo":(3250,"Huancayo"), "los chankas":(2920,"Andahuaylas"),
+    "utc":(2750,"Cajamarca"), "fc cajamarca":(2750,"Cajamarca"),
+    "comerciantes unidos":(2620,"Cutervo"), "melgar":(2335,"Arequipa"),
+    "universitario":(150,"Lima"), "alianza lima":(150,"Lima"),
+    "sporting cristal":(150,"Lima"), "sport boys":(10,"Callao"),
+    "atletico grau":(50,"Piura"), "alianza atletico":(50,"Sullana"),
+    "colegio juan pablo ii":(150,"Chongoyape"), "cd moquegua":(1410,"Moquegua")
 }
-
 
 def estandarizar_nombre(nombre):
     txt = normalizar_texto(nombre)
-
-    # Primero coincidencia exacta.
     if txt in DICCIONARIO_EQUIPOS:
         return DICCIONARIO_EQUIPOS[txt]
+    # No eliminamos "atletico" antes del diccionario.
+    txt = re.sub(r"\b(club|futbol club|fc|cd|fbc|deportivo|asociacion)\b"," ",txt)
+    txt = " ".join(txt.split())
+    return DICCIONARIO_EQUIPOS.get(txt,txt)
 
-    # Solo eliminar palabras genéricas.
-    txt2 = re.sub(
-        r"\b(club|fc|cd|fbc|deportivo|asociacion)\b",
-        " ",
-        txt
-    )
-    txt2 = " ".join(txt2.split())
-
-    if txt2 in DICCIONARIO_EQUIPOS:
-        return DICCIONARIO_EQUIPOS[txt2]
-
-    return txt
-
+def resolver_columna(df,candidatos,destino):
+    for c in candidatos:
+        if c in df.columns:
+            return df.rename(columns={c:destino})
+    return df
 
 def resolver_columna_club(df):
-    df = df.copy()
-    df.columns = [str(c).strip().lower() for c in df.columns]
-
-    posibles = [
-        "club", "equipo", "nombre", "team",
-        "clubes", "equipos"
-    ]
-
-    for pos in posibles:
-        if pos in df.columns:
-            df = df.rename(columns={pos: "club"})
-            break
-
-    if "club" not in df.columns and len(df.columns) > 0:
-        df["club"] = df.iloc[:, 0]
-
-    return df
-
+    df=df.copy()
+    df.columns=[normalizar_texto(c) for c in df.columns]
+    return resolver_columna(df,["club","equipo","nombre","team","clubes","equipos"],"club")
 
 # =========================================================
-# 2. CARGA DE DATOS
+# 2. RIVALIDADES
 # =========================================================
-def obtener_ruta_excel(nombre_archivo="Liga1_2026.xlsx"):
-    try:
-        directorio = os.path.dirname(os.path.abspath(__file__))
-    except NameError:
-        directorio = os.getcwd()
-    return os.path.join(directorio, nombre_archivo)
+RIVALIDADES = {
+    frozenset(["atletico grau","alianza atletico"]):"Clásico Piurano",
+    frozenset(["cusco","cienciano"]):"Clásico Cusqueño",
+    frozenset(["fc cajamarca","utc"]):"Clásico Cajamarquino",
+    frozenset(["fc cajamarca","comerciantes unidos"]):"Rivalidad Cajamarquina",
+    frozenset(["utc","comerciantes unidos"]):"Rivalidad Cajamarquina",
+}
 
+def obtener_rivalidad(a,b):
+    return RIVALIDADES.get(frozenset([a,b]))
 
-def preparar_partidos(df):
-    df = df.copy()
-    df.columns = [str(c).strip().lower() for c in df.columns]
+# =========================================================
+# 3. PREPARACIÓN DE DATOS
+# =========================================================
+def preparar_partidos(df,temporada_default=None):
+    df=df.copy()
+    df.columns=[normalizar_texto(c) for c in df.columns]
+    df=resolver_columna(df,["local","equipo local","local team"],"local")
+    df=resolver_columna(df,["visitante","visita","equipo visitante","away","away team"],"visita")
+    df=resolver_columna(df,["gl","goles local","goles_local","goles"],"goles_local")
+    df=resolver_columna(df,["gv","goles visita","goles_visitante","goles_visita"],"goles_visita")
+    df=resolver_columna(df,["fecha","date"],"fecha")
+    df=resolver_columna(df,["temporada","season","ano"],"temporada")
 
     if "local" not in df.columns or "visita" not in df.columns:
-        raise ValueError(
-            "Partidos_Fecha debe tener las columnas local y visita."
-        )
+        return pd.DataFrame()
 
-    if "jornada" in df.columns:
-        extra = df["jornada"].astype(str).str.extract(r"(\d+)")[0]
-        df["jornada_num"] = extra.fillna("0")
-    elif "fecha_num" in df.columns:
-        df["jornada_num"] = df["fecha_num"].astype(str)
-    else:
-        df["jornada_num"] = "0"
+    if "fecha" not in df.columns: df["fecha"]=pd.NaT
+    df["fecha"]=pd.to_datetime(df["fecha"],errors="coerce",dayfirst=True)
+    if "temporada" not in df.columns: df["temporada"]=temporada_default
+    else: df["temporada"]=df["temporada"].fillna(temporada_default)
 
-    df["fecha_str"] = (
-        df["fecha"].astype(str)
-        if "fecha" in df.columns
-        else ""
+    for c in ["goles_local","goles_visita"]:
+        if c not in df.columns: df[c]=np.nan
+        df[c]=pd.to_numeric(df[c],errors="coerce")
+
+    df["local_std"]=df["local"].apply(estandarizar_nombre)
+    df["visita_std"]=df["visita"].apply(estandarizar_nombre)
+    df["jugado_calc"]=(
+        df["goles_local"].notna() & df["goles_visita"].notna() &
+        df["local_std"].ne("") & df["visita_std"].ne("")
     )
-
-    if "hora" not in df.columns:
-        df["hora"] = "15:00"
-
-    if "goles_local" not in df.columns:
-        df["goles_local"] = np.nan
-
-    if "goles_visita" not in df.columns:
-        df["goles_visita"] = np.nan
-
-    if "jugado" not in df.columns:
-        df["jugado"] = False
-
-    df["local_std"] = df["local"].apply(estandarizar_nombre)
-    df["visita_std"] = df["visita"].apply(estandarizar_nombre)
-
     return df
-
 
 def cargar_datos_excel(fuente):
     try:
-        xls = pd.ExcelFile(fuente)
-        hojas = xls.sheet_names
+        xls=pd.ExcelFile(fuente)
+        hojas=xls.sheet_names
 
         if "Partidos_Fecha" not in hojas:
-            raise ValueError("Falta la hoja Partidos_Fecha.")
-        if "Tabla_Acumulada" not in hojas:
-            raise ValueError("Falta la hoja Tabla_Acumulada.")
+            raise ValueError("Falta la hoja 'Partidos_Fecha'.")
 
-        df_partidos = preparar_partidos(
-            pd.read_excel(xls, sheet_name="Partidos_Fecha")
-        )
+        dfp=pd.read_excel(xls,sheet_name="Partidos_Fecha")
+        dfp.columns=[normalizar_texto(c) for c in dfp.columns]
 
-        df_geo = None
-        if "Data_Geografica" in hojas:
-            df_geo = pd.read_excel(
-                xls, sheet_name="Data_Geografica"
-            )
-            df_geo = resolver_columna_club(df_geo)
-            df_geo["equipo_std"] = df_geo["club"].apply(
-                estandarizar_nombre
-            )
+        if "jornada" in dfp.columns:
+            dfp["jornada_num"]=dfp["jornada"].astype(str).str.extract(r"(\d+)")[0].fillna("1")
+        elif "fecha_num" in dfp.columns:
+            dfp["jornada_num"]=dfp["fecha_num"].astype(str)
         else:
-            df_geo = pd.DataFrame([
-                {
-                    "equipo_std": k,
-                    "altitud": v[0],
-                    "ciudad": v[1],
-                }
-                for k, v in ALTITUDES_DEFAULT.items()
-            ])
+            dfp["jornada_num"]="1"
 
-        df_acum = pd.read_excel(
-            xls, sheet_name="Tabla_Acumulada"
-        )
-        df_acum = resolver_columna_club(df_acum)
-        df_acum["equipo_std"] = df_acum["club"].apply(
-            estandarizar_nombre
-        )
+        if "fecha" in dfp.columns:
+            dfp["fecha"]=pd.to_datetime(dfp["fecha"],errors="coerce",dayfirst=True)
+            dfp["fecha_str"]=dfp["fecha"].dt.strftime("%Y-%m-%d")
+        else:
+            dfp["fecha"]=pd.NaT; dfp["fecha_str"]=""
+
+        if "hora" not in dfp.columns: dfp["hora"]="15:00"
+        dfp["local_std"]=dfp["local"].apply(estandarizar_nombre)
+        dfp["visita_std"]=dfp["visita"].apply(estandarizar_nombre)
+        if "goles_local" not in dfp.columns: dfp["goles_local"]=np.nan
+        if "goles_visita" not in dfp.columns: dfp["goles_visita"]=np.nan
+        if "jugado" not in dfp.columns:
+            dfp["jugado"]=dfp["goles_local"].notna() & dfp["goles_visita"].notna()
+
+        if "Data_Geografica" in hojas:
+            geo=resolver_columna_club(pd.read_excel(xls,sheet_name="Data_Geografica"))
+            geo["equipo_std"]=geo["club"].apply(estandarizar_nombre)
+        else:
+            geo=pd.DataFrame([{"equipo_std":k,"altitud":v[0],"ciudad":v[1]} for k,v in ALTITUDES_DEFAULT.items()])
+
+        if "Tabla_Acumulada" in hojas:
+            acum=resolver_columna_club(pd.read_excel(xls,sheet_name="Tabla_Acumulada"))
+            acum["equipo_std"]=acum["club"].apply(estandarizar_nombre)
+        else: acum=pd.DataFrame()
 
         if "Tabla_Clausura" in hojas:
-            df_claus = pd.read_excel(
-                xls, sheet_name="Tabla_Clausura"
-            )
-            df_claus = resolver_columna_club(df_claus)
-            df_claus["equipo_std"] = df_claus["club"].apply(
-                estandarizar_nombre
-            )
+            claus=resolver_columna_club(pd.read_excel(xls,sheet_name="Tabla_Clausura"))
+            claus["equipo_std"]=claus["club"].apply(estandarizar_nombre)
+        else: claus=pd.DataFrame()
+
+        resultados=[]
+        for hoja in ["Resultados_Apertura","Resultados_Clausura"]:
+            if hoja in hojas:
+                z=preparar_partidos(pd.read_excel(xls,sheet_name=hoja),2026)
+                if not z.empty: resultados.append(z)
+
+        res=pd.concat(resultados,ignore_index=True) if resultados else pd.DataFrame()
+        if not res.empty:
+            res=res[res["jugado_calc"]].sort_values("fecha",na_position="last").reset_index(drop=True)
+
+        if "Historial_H2H" in hojas:
+            h2h=preparar_partidos(pd.read_excel(xls,sheet_name="Historial_H2H"))
+            h2h=h2h[h2h["jugado_calc"]].sort_values("fecha",na_position="last").reset_index(drop=True)
+            estado=f"Historial_H2H cargado: {len(h2h)} enfrentamientos."
         else:
-            df_claus = df_acum.copy()
+            h2h=pd.DataFrame()
+            estado="No existe 'Historial_H2H'. El sistema funcionará sin H2H."
 
-        df_apertura = None
-        df_clausura_res = None
-
-        if "Resultados_Apertura" in hojas:
-            df_apertura = preparar_partidos(
-                pd.read_excel(
-                    xls, sheet_name="Resultados_Apertura"
-                )
-            )
-
-        if "Resultados_Clausura" in hojas:
-            df_clausura_res = preparar_partidos(
-                pd.read_excel(
-                    xls, sheet_name="Resultados_Clausura"
-                )
-            )
-
-        return (
-            df_partidos,
-            df_acum,
-            df_claus,
-            df_geo,
-            df_apertura,
-            df_clausura_res,
-            None,
-        )
-
+        return dfp,acum,claus,geo,res,h2h,estado,None
     except Exception as e:
-        return (
-            None, None, None, None,
-            None, None, str(e)
-        )
-
-
-def generar_bytes_excel(
-    df_partidos,
-    df_acum,
-    df_claus,
-    df_geo,
-    df_apertura=None,
-    df_clausura_res=None,
-):
-    buffer = io.BytesIO()
-
-    with pd.ExcelWriter(
-        buffer, engine="openpyxl"
-    ) as writer:
-        df_partidos.to_excel(
-            writer,
-            sheet_name="Partidos_Fecha",
-            index=False,
-        )
-        df_acum.to_excel(
-            writer,
-            sheet_name="Tabla_Acumulada",
-            index=False,
-        )
-        df_claus.to_excel(
-            writer,
-            sheet_name="Tabla_Clausura",
-            index=False,
-        )
-        df_geo.to_excel(
-            writer,
-            sheet_name="Data_Geografica",
-            index=False,
-        )
-
-        if df_apertura is not None:
-            df_apertura.to_excel(
-                writer,
-                sheet_name="Resultados_Apertura",
-                index=False,
-            )
-
-        if df_clausura_res is not None:
-            df_clausura_res.to_excel(
-                writer,
-                sheet_name="Resultados_Clausura",
-                index=False,
-            )
-
-    buffer.seek(0)
-    return buffer
-
-
-def guardar_cambios_excel(
-    df_partidos,
-    df_acum,
-    df_claus,
-    df_geo,
-    ruta,
-    df_apertura=None,
-    df_clausura_res=None,
-):
-    try:
-        with pd.ExcelWriter(
-            ruta, engine="openpyxl"
-        ) as writer:
-            df_partidos.to_excel(
-                writer,
-                sheet_name="Partidos_Fecha",
-                index=False,
-            )
-            df_acum.to_excel(
-                writer,
-                sheet_name="Tabla_Acumulada",
-                index=False,
-            )
-            df_claus.to_excel(
-                writer,
-                sheet_name="Tabla_Clausura",
-                index=False,
-            )
-            df_geo.to_excel(
-                writer,
-                sheet_name="Data_Geografica",
-                index=False,
-            )
-
-            if df_apertura is not None:
-                df_apertura.to_excel(
-                    writer,
-                    sheet_name="Resultados_Apertura",
-                    index=False,
-                )
-
-            if df_clausura_res is not None:
-                df_clausura_res.to_excel(
-                    writer,
-                    sheet_name="Resultados_Clausura",
-                    index=False,
-                )
-
-        return True, "Cambios guardados con éxito."
-
-    except Exception as e:
-        return False, str(e)
-
+        return None,None,None,None,None,None,None,str(e)
 
 # =========================================================
-# 3. RIVALIDADES
+# 4. ELO
 # =========================================================
-RIVALIDADES = {
-    frozenset(
-        ["atletico grau", "alianza atletico"]
-    ): "Clásico Piurano",
-
-    frozenset(
-        ["cusco", "cienciano"]
-    ): "Clásico Cusqueño",
-
-    frozenset(
-        ["fc cajamarca", "utc cajamarca"]
-    ): "Clásico Cajamarquino",
-
-    frozenset(
-        ["fc cajamarca", "comerciantes unidos"]
-    ): "Rivalidad Cajamarquina",
-
-    frozenset(
-        ["utc cajamarca", "comerciantes unidos"]
-    ): "Rivalidad Cajamarquina",
-}
-
-
-def obtener_rivalidad(local, visita):
-    clave = frozenset([local, visita])
-
-    if clave in RIVALIDADES:
-        return 1, RIVALIDADES[clave]
-
-    return 0, "Sin rivalidad especial"
-
+def calcular_elo_historico(df,k=24.0,elo_inicial=1500.0,ventaja_local=55.0):
+    if df is None or df.empty: return {}
+    ratings={}
+    for _,r in df.sort_values("fecha",na_position="last").iterrows():
+        a,b=r["local_std"],r["visita_std"]
+        ra=ratings.get(a,elo_inicial); rb=ratings.get(b,elo_inicial)
+        exp=1/(1+10**(-((ra+ventaja_local)-rb)/400))
+        gl,gv=float(r["goles_local"]),float(r["goles_visita"])
+        resultado=1.0 if gl>gv else 0.5 if gl==gv else 0.0
+        cambio=k*(resultado-exp)
+        ratings[a]=ra+cambio
+        ratings[b]=rb-cambio
+    return ratings
 
 # =========================================================
-# 4. HISTORIAL DE RESULTADOS
+# 5. FORMA
 # =========================================================
-def combinar_resultados(df_apertura, df_clausura):
-    frames = []
-
-    for df in [df_apertura, df_clausura]:
-        if df is None or df.empty:
-            continue
-
-        d = df.copy()
-
-        if "local_std" not in d.columns:
-            d["local_std"] = d["local"].apply(
-                estandarizar_nombre
-            )
-
-        if "visita_std" not in d.columns:
-            d["visita_std"] = d["visita"].apply(
-                estandarizar_nombre
-            )
-
-        d["goles_local_num"] = pd.to_numeric(
-            d.get("goles_local", np.nan),
-            errors="coerce",
-        )
-
-        d["goles_visita_num"] = pd.to_numeric(
-            d.get("goles_visita", np.nan),
-            errors="coerce",
-        )
-
-        d = d.dropna(
-            subset=[
-                "goles_local_num",
-                "goles_visita_num",
-            ]
-        )
-
-        frames.append(d)
-
-    if not frames:
-        return pd.DataFrame()
-
-    return pd.concat(
-        frames, ignore_index=True
-    )
-
-
-def historial_desde_partidos(df_partidos):
-    d = df_partidos.copy()
-
-    d["gl"] = pd.to_numeric(
-        d["goles_local"], errors="coerce"
-    )
-    d["gv"] = pd.to_numeric(
-        d["goles_visita"], errors="coerce"
-    )
-
-    if "jugado" in d.columns:
-        jugado = d["jugado"].astype(str).str.lower().isin(
-            ["true", "1", "si", "sí", "yes"]
-        )
-    else:
-        jugado = d["gl"].notna() & d["gv"].notna()
-
-    d = d[
-        jugado
-        & d["gl"].notna()
-        & d["gv"].notna()
-    ].copy()
-
-    if d.empty:
-        return pd.DataFrame()
-
-    d["goles_local_num"] = d["gl"]
-    d["goles_visita_num"] = d["gv"]
-
-    return d
-
-
-def ordenar_historico(df):
-    if df.empty:
-        return df
-
-    d = df.copy()
-
-    if "fecha" in d.columns:
-        d["_fecha"] = pd.to_datetime(
-            d["fecha"], errors="coerce"
-        )
-    elif "fecha_str" in d.columns:
-        d["_fecha"] = pd.to_datetime(
-            d["fecha_str"], errors="coerce"
-        )
-    else:
-        d["_fecha"] = pd.NaT
-
-    d["_jornada"] = pd.to_numeric(
-        d.get("jornada_num", 0),
-        errors="coerce",
-    ).fillna(0)
-
-    return d.sort_values(
-        ["_fecha", "_jornada"],
-        na_position="last"
-    ).reset_index(drop=True)
-
+def forma_equipo(equipo,df,n=5):
+    base={"partidos":0,"puntos":0.0,"ppg":1.0,"gf":0.0,"gc":0.0}
+    if df is None or df.empty: return base
+    z=df[(df["local_std"]==equipo)|(df["visita_std"]==equipo)].sort_values("fecha").tail(n)
+    if z.empty: return base
+    pts=gf=gc=0.0
+    for _,r in z.iterrows():
+        if r["local_std"]==equipo: f,c=r["goles_local"],r["goles_visita"]
+        else: f,c=r["goles_visita"],r["goles_local"]
+        gf+=f; gc+=c
+        pts+=3 if f>c else 1 if f==c else 0
+    return {"partidos":len(z),"puntos":pts,"ppg":pts/len(z),"gf":gf/len(z),"gc":gc/len(z)}
 
 # =========================================================
-# 5. ELO
+# 6. FUERZA ATAQUE/DEFENSA
 # =========================================================
-ELO_INICIAL = 1500.0
-ELO_K = 24.0
-VENTAJA_ELO_LOCAL = 55.0
+def medias_liga(df):
+    if df is None or df.empty: return 1.35,1.10
+    return max(float(df["goles_local"].mean()),0.80),max(float(df["goles_visita"].mean()),0.60)
 
+def fuerza_equipos(local,visita,tabla,res):
+    ml,mv=medias_liga(res)
 
-def calcular_elo_historico(df_hist):
-    elo = {}
-    partidos_elo = {}
+    def desde_tabla(eq):
+        if tabla is None or tabla.empty or "equipo_std" not in tabla.columns: return None
+        r=tabla[tabla["equipo_std"]==eq]
+        if r.empty: return None
+        cols={normalizar_texto(c):c for c in tabla.columns}
+        pjcol=cols.get("pj"); gfcol=cols.get("gf"); gccol=cols.get("gc")
+        if not all([pjcol,gfcol,gccol]): return None
+        pj=pd.to_numeric(r.iloc[0][pjcol],errors="coerce")
+        gf=pd.to_numeric(r.iloc[0][gfcol],errors="coerce")
+        gc=pd.to_numeric(r.iloc[0][gccol],errors="coerce")
+        if pd.isna(pj) or pj<=0 or pd.isna(gf) or pd.isna(gc): return None
+        return float(gf/pj),float(gc/pj)
 
-    if df_hist.empty:
-        return elo, partidos_elo
+    def desde_res(eq):
+        if res is None or res.empty: return ml,mv
+        z=res[(res["local_std"]==eq)|(res["visita_std"]==eq)]
+        if z.empty: return ml,mv
+        gf=z.loc[z["local_std"]==eq,"goles_local"].sum()+z.loc[z["visita_std"]==eq,"goles_visita"].sum()
+        gc=z.loc[z["local_std"]==eq,"goles_visita"].sum()+z.loc[z["visita_std"]==eq,"goles_local"].sum()
+        return float(gf/len(z)),float(gc/len(z))
 
-    hist = ordenar_historico(df_hist)
+    a=desde_tabla(local) or desde_res(local)
+    b=desde_tabla(visita) or desde_res(visita)
+    return a[0],a[1],b[0],b[1],ml,mv
 
-    for _, row in hist.iterrows():
-        local = row.get(
-            "local_std",
-            estandarizar_nombre(
-                row.get("local", "")
-            )
-        )
-        visita = row.get(
-            "visita_std",
-            estandarizar_nombre(
-                row.get("visita", "")
-            )
-        )
+# =========================================================
+# 7. GEOGRAFÍA
+# =========================================================
+def geo_equipo(eq,geo):
+    if geo is not None and not geo.empty and "equipo_std" in geo.columns:
+        r=geo[geo["equipo_std"]==eq]
+        if not r.empty:
+            alt=pd.to_numeric(r.iloc[0].get("altitud",np.nan),errors="coerce")
+            ciudad=str(r.iloc[0].get("ciudad",ALTITUDES_DEFAULT.get(eq,(150,"Lima"))[1]))
+            if pd.notna(alt): return float(alt),ciudad
+    return ALTITUDES_DEFAULT.get(eq,(150,"Lima"))
 
-        if not local or not visita or local == visita:
-            continue
+# =========================================================
+# 8. H2H
+# =========================================================
+def peso_recencia(fecha,ref):
+    if pd.isna(fecha) or pd.isna(ref): return 0.35
+    anos=max(0,(pd.Timestamp(ref)-pd.Timestamp(fecha)).days)/365.25
+    if anos<=2: return 1.00
+    if anos<=4: return 0.75
+    if anos<=6: return 0.50
+    if anos<=8: return 0.30
+    return 0.15
 
-        gl = pd.to_numeric(
-            row.get("goles_local_num", np.nan),
-            errors="coerce",
-        )
-        gv = pd.to_numeric(
-            row.get("goles_visita_num", np.nan),
-            errors="coerce",
-        )
+def h2h_info(local,visita,df,fecha_ref,max_partidos=10):
+    base={"n":0,"local_w":0,"draw":0,"visit_w":0,"indice":0.5,"same_n":0,"same_indice":0.5}
+    if df is None or df.empty: return base,pd.DataFrame()
 
-        if pd.isna(gl) or pd.isna(gv):
-            continue
+    z=df.copy()
+    if pd.notna(fecha_ref):
+        z=z[z["fecha"].isna()|(z["fecha"]<pd.Timestamp(fecha_ref))]
+    z=z[
+        ((z["local_std"]==local)&(z["visita_std"]==visita))|
+        ((z["local_std"]==visita)&(z["visita_std"]==local))
+    ].sort_values("fecha",na_position="last").tail(max_partidos)
 
-        elo.setdefault(local, ELO_INICIAL)
-        elo.setdefault(visita, ELO_INICIAL)
-        partidos_elo.setdefault(local, 0)
-        partidos_elo.setdefault(visita, 0)
+    if z.empty: return base,z
 
-        if gl > gv:
-            resultado = 1.0
-        elif gl == gv:
-            resultado = 0.5
+    ref=pd.Timestamp(fecha_ref) if pd.notna(fecha_ref) else pd.Timestamp.today()
+    wl=wd=wv=0.0
+    sw=sd=sl=st=0.0
+
+    for _,r in z.iterrows():
+        p=peso_recencia(r["fecha"],ref)
+        gl,gv=float(r["goles_local"]),float(r["goles_visita"])
+        if r["local_std"]==local:
+            a,b=gl,gv
+            mismo=True
         else:
-            resultado = 0.0
+            a,b=gv,gl
+            mismo=False
+        if a>b: wl+=p
+        elif a==b: wd+=p
+        else: wv+=p
+        if mismo:
+            st+=p
+            if a>b: sw+=p
+            elif a==b: sd+=p
+            else: sl+=p
 
-        diferencia = (
-            elo[local]
-            + VENTAJA_ELO_LOCAL
-            - elo[visita]
-        )
+    total=wl+wd+wv
+    indice=(wl+0.5*wd)/total if total else 0.5
+    same=(sw+0.5*sd)/st if st else 0.5
 
-        esperado = 1.0 / (
-            1.0 + 10.0 ** (-diferencia / 400.0)
-        )
+    # Conteo sin ponderar, para mostrar al usuario.
+    lw=dw=vw=0
+    for _,r in z.iterrows():
+        if r["local_std"]==local:
+            a,b=r["goles_local"],r["goles_visita"]
+        else:
+            a,b=r["goles_visita"],r["goles_local"]
+        if a>b: lw+=1
+        elif a==b: dw+=1
+        else: vw+=1
 
-        cambio = ELO_K * (
-            resultado - esperado
-        )
-
-        elo[local] += cambio
-        elo[visita] -= cambio
-
-        partidos_elo[local] += 1
-        partidos_elo[visita] += 1
-
-    return elo, partidos_elo
-
-
-# =========================================================
-# 6. FORMA RECIENTE
-# =========================================================
-def obtener_forma_equipo(equipo, df_hist, n=5):
-    base = {
-        "partidos": 0,
-        "puntos_promedio": 1.0,
-        "gf_promedio": 1.25,
-        "gc_promedio": 1.25,
-        "diferencia_promedio": 0.0,
-        "victorias": 0,
-        "empates": 0,
-        "derrotas": 0,
-    }
-
-    if df_hist.empty:
-        return base
-
-    h = df_hist.copy()
-
-    if "local_std" not in h.columns:
-        h["local_std"] = h["local"].apply(
-            estandarizar_nombre
-        )
-
-    if "visita_std" not in h.columns:
-        h["visita_std"] = h["visita"].apply(
-            estandarizar_nombre
-        )
-
-    local = h[
-        h["local_std"] == equipo
-    ].copy()
-
-    local["gf_eq"] = local[
-        "goles_local_num"
-    ]
-    local["gc_eq"] = local[
-        "goles_visita_num"
-    ]
-
-    local["puntos"] = np.where(
-        local["gf_eq"] > local["gc_eq"],
-        3,
-        np.where(
-            local["gf_eq"] == local["gc_eq"],
-            1,
-            0,
-        ),
-    )
-
-    visita = h[
-        h["visita_std"] == equipo
-    ].copy()
-
-    visita["gf_eq"] = visita[
-        "goles_visita_num"
-    ]
-    visita["gc_eq"] = visita[
-        "goles_local_num"
-    ]
-
-    visita["puntos"] = np.where(
-        visita["gf_eq"] > visita["gc_eq"],
-        3,
-        np.where(
-            visita["gf_eq"] == visita["gc_eq"],
-            1,
-            0,
-        ),
-    )
-
-    partidos = pd.concat(
-        [local, visita],
-        ignore_index=True
-    )
-
-    if partidos.empty:
-        return base
-
-    partidos = ordenar_historico(
-        partidos
-    ).tail(n)
-
-    puntos = partidos["puntos"].astype(float)
-    gf = partidos["gf_eq"].astype(float)
-    gc = partidos["gc_eq"].astype(float)
-
-    return {
-        "partidos": len(partidos),
-        "puntos_promedio": float(
-            puntos.mean()
-        ),
-        "gf_promedio": float(
-            gf.mean()
-        ),
-        "gc_promedio": float(
-            gc.mean()
-        ),
-        "diferencia_promedio": float(
-            (gf - gc).mean()
-        ),
-        "victorias": int(
-            (puntos == 3).sum()
-        ),
-        "empates": int(
-            (puntos == 1).sum()
-        ),
-        "derrotas": int(
-            (puntos == 0).sum()
-        ),
-    }
-
+    base.update({"n":len(z),"local_w":lw,"draw":dw,"visit_w":vw,
+                 "indice":float(indice),"same_n":int(z["local_std"].eq(local).sum()),
+                 "same_indice":float(same)})
+    return base,z
 
 # =========================================================
-# 7. FUERZA DE TABLA
+# 9. DIXON-COLES + ELO + FORMA + ALTITUD + H2H
 # =========================================================
-def valor_numerico(row, columna, defecto):
-    if columna not in row.index:
-        return defecto
-
-    valor = pd.to_numeric(
-        row[columna], errors="coerce"
-    )
-
-    if pd.isna(valor):
-        return defecto
-
-    return float(valor)
-
-
-def obtener_fuerza_equipos(
-    equipo_local,
-    equipo_visita,
-    df_tabla
-):
-    df_t = df_tabla.copy()
-
-    if "equipo_std" not in df_t.columns:
-        df_t = resolver_columna_club(df_t)
-        df_t["equipo_std"] = df_t[
-            "club"
-        ].apply(estandarizar_nombre)
-
-    row_loc = df_t[
-        df_t["equipo_std"] == equipo_local
-    ]
-
-    row_vis = df_t[
-        df_t["equipo_std"] == equipo_visita
-    ]
-
-    if not row_loc.empty:
-        r = row_loc.iloc[0]
-        gf_loc = valor_numerico(
-            r, "gf", 1.25
-        )
-        gc_loc = valor_numerico(
-            r, "gc", 1.25
-        )
-        pj_loc = max(
-            1.0,
-            valor_numerico(r, "pj", 1.0)
-        )
-    else:
-        gf_loc, gc_loc, pj_loc = (
-            1.25, 1.25, 1.0
-        )
-
-    if not row_vis.empty:
-        r = row_vis.iloc[0]
-        gf_vis = valor_numerico(
-            r, "gf", 1.25
-        )
-        gc_vis = valor_numerico(
-            r, "gc", 1.25
-        )
-        pj_vis = max(
-            1.0,
-            valor_numerico(r, "pj", 1.0)
-        )
-    else:
-        gf_vis, gc_vis, pj_vis = (
-            1.25, 1.25, 1.0
-        )
-
-    return (
-        gf_loc / pj_loc,
-        gc_loc / pj_loc,
-        gf_vis / pj_vis,
-        gc_vis / pj_vis,
-    )
-
-
-# =========================================================
-# 8. GEOGRAFÍA
-# =========================================================
-def obtener_info_geo(equipo, df_geo):
-    if df_geo is not None and not df_geo.empty:
-        df_g = df_geo.copy()
-
-        if "equipo_std" not in df_g.columns:
-            df_g = resolver_columna_club(df_g)
-            df_g["equipo_std"] = df_g[
-                "club"
-            ].apply(estandarizar_nombre)
-
-        row = df_g[
-            df_g["equipo_std"] == equipo
-        ]
-
-        if not row.empty:
-            r = row.iloc[0]
-
-            alt = pd.to_numeric(
-                r.get("altitud", np.nan),
-                errors="coerce",
-            )
-
-            ciudad = str(
-                r.get("ciudad", "")
-            )
-
-            if pd.isna(alt):
-                alt = ALTITUDES_DEFAULT.get(
-                    equipo, (150, "Lima")
-                )[0]
-
-            if ciudad.lower() in [
-                "nan", "", "none"
-            ]:
-                ciudad = ALTITUDES_DEFAULT.get(
-                    equipo, (150, "Lima")
-                )[1]
-
-            return float(alt), ciudad
-
-    return ALTITUDES_DEFAULT.get(
-        equipo, (150, "Lima")
-    )
-
-
-def factor_altitud(
-    alt_local,
-    alt_visita
-):
-    # Ajuste moderado, deliberadamente menor
-    # que los coeficientes de la versión anterior.
-    diferencia = max(
-        0.0,
-        alt_local - alt_visita
-    )
-
-    if alt_local < 1800:
-        f_loc, f_vis = 1.00, 1.00
-    elif alt_local < 2500:
-        f_loc, f_vis = 1.02, 0.96
-    elif alt_local < 3000:
-        f_loc, f_vis = 1.04, 0.92
-    else:
-        f_loc, f_vis = 1.06, 0.88
-
-    extra = min(
-        0.06,
-        diferencia / 10000.0
-    )
-
-    f_vis *= 1.0 - extra
-    f_loc *= 1.0 + extra * 0.35
-
-    return f_loc, f_vis
-
-
-# =========================================================
-# 9. DIXON-COLES + ELO + FORMA + RIVALIDAD
-# =========================================================
-def tau_dixon_coles(
-    x,
-    y,
-    lambda_local,
-    mu_visita,
-    rho=-0.08
-):
-    if x == 0 and y == 0:
-        return max(
-            0.0001,
-            1.0 - (
-                lambda_local
-                * mu_visita
-                * rho
-            )
-        )
-
-    if x == 1 and y == 0:
-        return max(
-            0.0001,
-            1.0 + (
-                mu_visita * rho
-            )
-        )
-
-    if x == 0 and y == 1:
-        return max(
-            0.0001,
-            1.0 + (
-                lambda_local * rho
-            )
-        )
-
-    if x == 1 and y == 1:
-        return max(
-            0.0001,
-            1.0 - rho
-        )
-
+def tau_dc(x,y,lam,mu,rho=-0.11):
+    if x==0 and y==0: return max(0.0001,1-lam*mu*rho)
+    if x==1 and y==0: return max(0.0001,1+mu*rho)
+    if x==0 and y==1: return max(0.0001,1+lam*rho)
+    if x==1 and y==1: return max(0.0001,1-rho)
     return 1.0
 
+def matriz_dc(lam,mu,rho=-0.11,n=9):
+    m=np.zeros((n,n))
+    for x in range(n):
+        for y in range(n):
+            m[x,y]=max(0,poisson.pmf(x,lam)*poisson.pmf(y,mu)*tau_dc(x,y,lam,mu,rho))
+    s=m.sum()
+    return m/s if s>0 else m
 
-def calcular_dixon_coles_v2(
-    equipo_local,
-    equipo_visita,
-    df_tabla,
-    df_geo,
-    df_hist,
-    elo,
-    partidos_elo,
-    rho=-0.08,
-):
-    att_loc, def_loc, att_vis, def_vis = (
-        obtener_fuerza_equipos(
-            equipo_local,
-            equipo_visita,
-            df_tabla,
-        )
-    )
+def calcular_modelo(local,visita,tabla,res,geo,h2h,fecha_ref,rho=-0.11):
+    attl,defl,attv,defv,ml,mv=fuerza_equipos(local,visita,tabla,res)
 
-    forma_loc = obtener_forma_equipo(
-        equipo_local, df_hist, 5
-    )
-    forma_vis = obtener_forma_equipo(
-        equipo_visita, df_hist, 5
-    )
+    # Fuerza relativa.
+    al=np.clip(attl/max(ml,0.8),0.60,1.60)
+    dl=np.clip(defl/max(mv,0.8),0.60,1.60)
+    av=np.clip(attv/max(mv,0.6),0.60,1.60)
+    dv=np.clip(defv/max(ml,0.8),0.60,1.60)
 
-    dif_forma = (
-        forma_loc["puntos_promedio"]
-        - forma_vis["puntos_promedio"]
-    )
+    # Elo.
+    elo=calcular_elo_historico(res)
+    el=elo.get(local,1500.0); ev=elo.get(visita,1500.0)
+    de=el-ev
 
-    ajuste_forma_loc = np.clip(
-        1.0 + 0.08 * dif_forma / 3.0,
-        0.92,
-        1.08,
-    )
+    rival=obtener_rivalidad(local,visita)
+    de_aj=de*(0.90 if rival else 1.0)
+    fe_l=np.exp(np.clip(de_aj,-400,400)/400*0.14)
+    fe_v=np.exp(np.clip(-de_aj,-400,400)/400*0.14)
 
-    ajuste_forma_vis = np.clip(
-        1.0 - 0.08 * dif_forma / 3.0,
-        0.92,
-        1.08,
-    )
+    # Forma últimos 5.
+    fl=foma=forma_equipo(local,res,5)
+    fv=forma_equipo(visita,res,5)
+    dforma=fl["ppg"]-fv["ppg"]
+    ff_l=np.exp(np.clip(dforma,-3,3)*(0.040 if rival else 0.055))
+    ff_v=np.exp(np.clip(-dforma,-3,3)*(0.040 if rival else 0.055))
 
-    elo_loc = float(
-        elo.get(equipo_local, ELO_INICIAL)
-    )
-    elo_vis = float(
-        elo.get(equipo_visita, ELO_INICIAL)
-    )
+    # Altitud.
+    altl,ciudad=geo_equipo(local,geo)
+    altv,ciudadv=geo_equipo(visita,geo)
+    dif=max(0,altl-altv)
+    factor_alt_l=1.0
+    factor_alt_v=1.0
+    if altl>=2000:
+        factor_alt_l*=1+min(0.10,dif/8000)
+        factor_alt_v*=1-min(0.18,dif/6500)
+    factor_alt_v=max(0.82,factor_alt_v)
+    home_adv=1.08 if altl<2000 else 1.12
 
-    dif_elo = (
-        elo_loc
-        + VENTAJA_ELO_LOCAL
-        - elo_vis
-    )
+    # Goles esperados.
+    lam=ml*al*dv*home_adv*fe_l*ff_l*factor_alt_l
+    mu=mv*av*dl*fe_v*ff_v*factor_alt_v
+    lam=float(np.clip(lam,0.25,3.80))
+    mu=float(np.clip(mu,0.20,3.20))
 
-    ajuste_elo = np.clip(
-        1.0 + 0.00035 * dif_elo,
-        0.88,
-        1.12,
-    )
+    m=matriz_dc(lam,mu,rho,9)
+    p1=float(np.tril(m,-1).sum())
+    px=float(np.trace(m))
+    p2=float(np.triu(m,1).sum())
 
-    alt_loc, ciudad_loc = obtener_info_geo(
-        equipo_local, df_geo
-    )
-    alt_vis, ciudad_vis = obtener_info_geo(
-        equipo_visita, df_geo
-    )
+    # H2H: máximo 12%; 16% en rivalidades.
+    hh,hh_rows=h2h_info(local,visita,h2h,fecha_ref,10)
+    ph=0.12*min(1,hh["n"]/10)
+    if rival: ph=min(0.16,ph*1.25)
 
-    home_advantage = (
-        1.14
-        if alt_loc < 1800
-        else 1.18
-    )
+    indice=hh["indice"]
+    if hh["same_n"]>=2:
+        indice=0.70*indice+0.30*hh["same_indice"]
 
-    factor_alt_loc, factor_alt_vis = (
-        factor_altitud(
-            alt_loc,
-            alt_vis,
-        )
-    )
+    hv=np.array([0.50+0.50*(indice-0.50),0.50,0.50-0.50*(indice-0.50)])
+    hv=hv/hv.sum()
+    base=np.array([p1,px,p2])
+    final=(1-ph)*base+ph*hv
+    final=final/final.sum()
+    p1,px,p2=final.tolist()
 
-    rivalidad, nombre_rivalidad = (
-        obtener_rivalidad(
-            equipo_local,
-            equipo_visita,
-        )
-    )
-
-    # La rivalidad MODERA la diferencia de fuerza.
-    # No impone 50/50.
-    ajuste_rivalidad = 1.0
-
-    if rivalidad:
-        diferencia_ataque = np.clip(
-            att_loc - att_vis,
-            -1.0,
-            1.0,
-        )
-
-        ajuste_rivalidad = (
-            1.0
-            - 0.022
-            * diferencia_ataque
-        )
-
-    base_local = (
-        att_loc
-        * (def_vis / 1.20)
-        * home_advantage
-    )
-
-    base_visita = (
-        att_vis
-        * (def_loc / 1.20)
-    )
-
-    lambda_local = (
-        base_local
-        * (0.65 + 0.35 * ajuste_elo)
-        * ajuste_forma_loc
-        * factor_alt_loc
-        * ajuste_rivalidad
-    )
-
-    mu_visita = (
-        base_visita
-        * (
-            0.65
-            + 0.35 * (2.0 - ajuste_elo)
-        )
-        * ajuste_forma_vis
-        * factor_alt_vis
-    )
-
-    lambda_local = float(
-        np.clip(
-            lambda_local,
-            0.45,
-            3.50,
-        )
-    )
-
-    mu_visita = float(
-        np.clip(
-            mu_visita,
-            0.30,
-            3.00,
-        )
-    )
-
-    max_goles = 9
-    matriz = np.zeros(
-        (max_goles, max_goles)
-    )
-
-    for x in range(max_goles):
-        for y in range(max_goles):
-            matriz[x, y] = max(
-                0.0,
-                poisson.pmf(
-                    x, lambda_local
-                )
-                * poisson.pmf(
-                    y, mu_visita
-                )
-                * tau_dixon_coles(
-                    x,
-                    y,
-                    lambda_local,
-                    mu_visita,
-                    rho,
-                ),
-            )
-
-    total = matriz.sum()
-
-    if total <= 0:
-        raise ValueError(
-            "No se pudo construir la matriz."
-        )
-
-    matriz /= total
-
-    p_local = float(
-        np.tril(matriz, -1).sum()
-    )
-    p_empate = float(
-        np.trace(matriz)
-    )
-    p_visita = float(
-        np.triu(matriz, 1).sum()
-    )
-
-    p_under25 = float(
-        sum(
-            matriz[x, y]
-            for x in range(max_goles)
-            for y in range(max_goles)
-            if x + y <= 2
-        )
-    )
-
-    p_over25 = 1.0 - p_under25
-
-    p_btts_si = float(
-        matriz[1:, 1:].sum()
-    )
-    p_btts_no = 1.0 - p_btts_si
-
-    marcador = np.unravel_index(
-        np.argmax(matriz),
-        matriz.shape,
-    )
+    over=float(1-sum(m[i,j] for i in range(9) for j in range(9) if i+j<=2))
+    under=1-over
+    btts=float(m[1:,1:].sum())
+    nbtts=1-btts
+    idx=np.unravel_index(np.argmax(m),m.shape)
 
     return {
-        "p_local": p_local,
-        "p_empate": p_empate,
-        "p_visita": p_visita,
-        "p_over25": p_over25,
-        "p_under25": p_under25,
-        "p_btts_si": p_btts_si,
-        "p_btts_no": p_btts_no,
-        "lambda_local": lambda_local,
-        "mu_visita": mu_visita,
-        "altitud": alt_loc,
-        "altitud_visita": alt_vis,
-        "ciudad_local": ciudad_loc,
-        "ciudad_visita": ciudad_vis,
-        "elo_local": elo_loc,
-        "elo_visita": elo_vis,
-        "dif_elo": dif_elo,
-        "forma_local": forma_loc,
-        "forma_visita": forma_vis,
-        "rivalidad": rivalidad,
-        "nombre_rivalidad": nombre_rivalidad,
-        "marcador_modal": (
-            f"{marcador[0]}-{marcador[1]}"
-        ),
-        "partidos_elo_local": partidos_elo.get(
-            equipo_local, 0
-        ),
-        "partidos_elo_visita": partidos_elo.get(
-            equipo_visita, 0
-        ),
+        "p_local":p1,"p_empate":px,"p_visita":p2,
+        "over":over,"under":under,"btts":btts,"no_btts":nbtts,
+        "lambda":lam,"mu":mu,"elo_local":el,"elo_visita":ev,"dif_elo":de,
+        "forma_local":fl,"forma_visita":fv,"alt_local":altl,"alt_visita":altv,
+        "ciudad_local":ciudad,"ciudad_visita":ciudadv,
+        "rivalidad":rival,"h2h":hh,"peso_h2h":ph,
+        "marcador_modal":f"{idx[0]}-{idx[1]}","prob_modal":float(m[idx])
     }
 
+def cuota(p): return 1/max(float(p),0.001)
+
+def sugerencia(p1,px,p2,nl,nv):
+    opciones=[(p1,f"Gana {nl}"),(px,"Empate"),(p2,f"Gana {nv}")]
+    opciones.sort(reverse=True)
+    if opciones[0][0]>=0.55: return opciones[0][1],"Alta"
+    if opciones[0][0]>=0.45 and opciones[0][0]-opciones[1][0]>=0.08:
+        return opciones[0][1],"Media-Alta"
+    if p1+px>=0.67 and p1>=p2: return f"Local o Empate ({nl})","Media-Alta"
+    if p2+px>=0.67 and p2>=p1: return f"Empate o Visita ({nv})","Media-Alta"
+    return "Doble Opción","Media"
 
 # =========================================================
-# 10. SUGERENCIAS
+# 10. EXCEL
 # =========================================================
-def generar_sugerencia(
-    p_loc,
-    p_emp,
-    p_vis,
-    nombre_loc,
-    nombre_vis,
-):
-    probs = {
-        f"Gana {nombre_loc}": p_loc,
-        "Empate": p_emp,
-        f"Gana {nombre_vis}": p_vis,
-    }
+def exportar_excel(p,a,c,g,h,res):
+    b=io.BytesIO()
+    with pd.ExcelWriter(b,engine="openpyxl") as w:
+        p.to_excel(w,sheet_name="Partidos_Fecha",index=False)
+        if a is not None and not a.empty: a.to_excel(w,sheet_name="Tabla_Acumulada",index=False)
+        if c is not None and not c.empty: c.to_excel(w,sheet_name="Tabla_Clausura",index=False)
+        if g is not None and not g.empty: g.to_excel(w,sheet_name="Data_Geografica",index=False)
+        if res is not None and not res.empty: res.to_excel(w,sheet_name="Resultados_Consolidados",index=False)
+        if h is not None and not h.empty: h.to_excel(w,sheet_name="Historial_H2H",index=False)
+        else: pd.DataFrame(columns=["Fecha","Local","Visitante","GL","GV","Temporada"]).to_excel(w,sheet_name="Historial_H2H",index=False)
+    b.seek(0)
+    return b
 
-    orden = sorted(
-        probs.items(),
-        key=lambda x: x[1],
-        reverse=True,
-    )
-
-    mejor, p_mejor = orden[0]
-    _, p_segundo = orden[1]
-
-    diferencia = p_mejor - p_segundo
-
-    if p_mejor >= 0.55 and diferencia >= 0.10:
-        confianza = "Alta"
-    elif p_mejor >= 0.45 and diferencia >= 0.06:
-        confianza = "Media-Alta"
-    elif p_mejor >= 0.38:
-        confianza = "Media"
-    else:
-        confianza = "Baja"
-
-    if confianza == "Baja":
-        if p_loc + p_emp >= 0.62:
-            sugerencia = (
-                f"1X — {nombre_loc} o Empate"
-            )
-        elif p_vis + p_emp >= 0.62:
-            sugerencia = (
-                f"X2 — Empate o {nombre_vis}"
-            )
-        else:
-            sugerencia = mejor
-    else:
-        sugerencia = mejor
-
-    return sugerencia, confianza
-
-
-def nivel_confianza(p):
-    if p >= 0.65:
-        return "Alta"
-    if p >= 0.55:
-        return "Media-Alta"
-    if p >= 0.45:
-        return "Media"
-    return "Baja"
-
+def guardar_excel(p,a,c,g,h,res,ruta):
+    try:
+        with open(ruta,"wb") as f:
+            f.write(exportar_excel(p,a,c,g,h,res).getvalue())
+        return True,"Guardado correctamente."
+    except Exception as e:
+        return False,str(e)
 
 # =========================================================
-# 11. INTERFAZ STREAMLIT
+# 11. CARGA
 # =========================================================
-st.title(
-    "⚽ Modelo de Predicción Liga 1 Perú — V2"
-)
-st.caption(
-    "Dixon-Coles + Poisson + Elo + forma + tabla + "
-    "altitud + rivalidades"
-)
+st.title("⚽ Modelo de Predicción Liga 1 Perú")
+st.caption("V3: Dixon-Coles + Elo + Forma reciente + Altitud + Rivalidad + Historial H2H")
 
 st.sidebar.header("📁 Archivo de Datos")
-
-archivo_subido = st.sidebar.file_uploader(
-    "Subir archivo Excel (Liga1_2026.xlsx)",
-    type=["xlsx"],
-)
-
-ruta_local = obtener_ruta_excel(
-    "Liga1_2026.xlsx"
-)
-
-fuente_excel = (
-    archivo_subido
-    if archivo_subido is not None
-    else (
-        ruta_local
-        if os.path.exists(ruta_local)
-        else None
-    )
-)
+upload=st.sidebar.file_uploader("Subir Liga1_2026.xlsx",type=["xlsx"])
+ruta=os.path.join(os.path.dirname(os.path.abspath(__file__)),"Liga1_2026.xlsx")
+fuente=upload if upload is not None else (ruta if os.path.exists(ruta) else None)
 
 if st.sidebar.button("🔄 Recargar Datos"):
     st.session_state.clear()
     st.rerun()
 
-if fuente_excel is None:
-    st.error(
-        "❌ No se encontró Liga1_2026.xlsx. "
-        "Sube el archivo Excel en el menú lateral."
-    )
+if fuente is None:
+    st.error("❌ No se encontró Liga1_2026.xlsx. Sube el archivo desde el menú lateral.")
     st.stop()
 
-if (
-    "df_partidos" not in st.session_state
-    or archivo_subido is not None
-):
-    (
-        df_p,
-        df_a,
-        df_c,
-        df_g,
-        df_ap,
-        df_cr,
-        err,
-    ) = cargar_datos_excel(
-        fuente_excel
-    )
-
-    if err:
-        st.error(
-            f"Error al procesar el Excel: {err}"
-        )
-        st.stop()
-
-    st.session_state.df_partidos = df_p
-    st.session_state.df_acum = df_a
-    st.session_state.df_claus = df_c
-    st.session_state.df_geo = df_g
-    st.session_state.df_apertura = df_ap
-    st.session_state.df_clausura_res = df_cr
-
+if "cargado" not in st.session_state or upload is not None:
+    datos=cargar_datos_excel(fuente)
+    if datos[-1] is not None:
+        st.error(datos[-1]); st.stop()
+    p,a,c,g,res,h,estado,_=datos
+    st.session_state.update(df_partidos=p,df_acum=a,df_claus=c,df_geo=g,df_resultados=res,df_h2h=h,h2h_estado=estado,cargado=True)
 
 # =========================================================
-# HISTORIAL + ELO
+# 12. SIDEBAR
 # =========================================================
-historial = combinar_resultados(
-    st.session_state.df_apertura,
-    st.session_state.df_clausura_res,
-)
+opciones=[]
+if not st.session_state.df_acum.empty: opciones.append("Tabla Acumulada")
+if not st.session_state.df_claus.empty: opciones.append("Tabla Clausura")
+if not opciones: opciones=["Resultados históricos"]
 
-hist_partidos = historial_desde_partidos(
-    st.session_state.df_partidos
-)
+tabla_ref=st.sidebar.radio("Tabla de Rendimiento:",opciones)
+tabla=st.session_state.df_acum if tabla_ref=="Tabla Acumulada" else st.session_state.df_claus
 
-if not hist_partidos.empty:
-    historial = pd.concat(
-        [historial, hist_partidos],
-        ignore_index=True,
-    )
+jornadas=sorted(st.session_state.df_partidos["jornada_num"].astype(str).unique(),key=lambda x:int(x) if x.isdigit() else 0)
+idx=jornadas.index("8") if "8" in jornadas else len(jornadas)-1
+jornada=st.sidebar.selectbox("Seleccionar Jornada:",jornadas,index=max(0,idx),format_func=lambda x:f"Jornada {x}")
 
-if not historial.empty:
-    cols = [
-        c for c in [
-            "fecha_str",
-            "local_std",
-            "visita_std",
-            "goles_local_num",
-            "goles_visita_num",
-        ]
-        if c in historial.columns
-    ]
+rho=st.sidebar.slider("Rho Dixon-Coles",-0.20,0.00,-0.11,0.01)
+st.sidebar.info(st.session_state.h2h_estado)
+st.sidebar.caption("H2H: últimos 10 enfrentamientos anteriores al partido. Peso máximo 12%; 16% en rivalidades.")
 
-    if cols:
-        historial = historial.drop_duplicates(
-            subset=cols,
-            keep="first",
-        )
+dfj=st.session_state.df_partidos[st.session_state.df_partidos["jornada_num"].astype(str)==str(jornada)].reset_index(drop=True)
 
-elo, partidos_elo = calcular_elo_historico(
-    historial
-)
-
+tab1,tab2,tab3=st.tabs([f"📊 Pronósticos Jornada {jornada}","📝 Actualizar Resultados","🔎 Diagnóstico"])
 
 # =========================================================
-# SIDEBAR
+# 13. PRONÓSTICOS
 # =========================================================
-tabla_ref = st.sidebar.radio(
-    "Tabla de Rendimiento:",
-    (
-        "Tabla Acumulada",
-        "Tabla Clausura",
-    ),
-    index=0,
-)
+with tab1:
+    st.subheader(f"Jornada {jornada} - Pronósticos ({tabla_ref})")
 
-df_tabla_act = (
-    st.session_state.df_acum
-    if tabla_ref == "Tabla Acumulada"
-    else st.session_state.df_claus
-)
+    for i,row in dfj.iterrows():
+        nl=str(row["local"]).strip(); nv=str(row["visita"]).strip()
+        r=calcular_modelo(row["local_std"],row["visita_std"],tabla,
+                          st.session_state.df_resultados,st.session_state.df_geo,
+                          st.session_state.df_h2h,row.get("fecha",pd.NaT),rho)
 
-jornadas = sorted(
-    st.session_state.df_partidos[
-        "jornada_num"
-    ].astype(str).unique(),
-    key=lambda x: (
-        int(x)
-        if str(x).isdigit()
-        else 9999
-    ),
-)
+        p1,px,p2=r["p_local"],r["p_empate"],r["p_visita"]
+        sug,conf=sugerencia(p1,px,p2,nl,nv)
+        fg="Alta" if max(r["over"],r["under"])>=0.65 else "Media"
+        fb="Alta" if max(r["btts"],r["no_btts"])>=0.65 else "Media"
+        fecha=row.get("fecha",pd.NaT)
+        fecha_txt=fecha.strftime("%Y-%m-%d") if pd.notna(fecha) else "No registrada"
 
-if not jornadas:
-    st.error("No se encontraron jornadas.")
-    st.stop()
+        st.markdown(f"### 🏟️ {nl} vs {nv} | {r['ciudad_local']} ({r['alt_local']:.0f} msnm)")
+        st.caption(f"📅 {fecha_txt}  |  🕒 {row.get('hora','15:00')}")
 
-idx_default = (
-    jornadas.index("8")
-    if "8" in jornadas
-    else 0
-)
+        c1,c2,c3=st.columns(3)
+        with c1:
+            st.write(f"**Gana {nl}**"); st.title(f"{p1*100:.1f}%"); st.caption(f"Cuota justa: {cuota(p1):.2f}")
+        with c2:
+            st.write("**Empate**"); st.title(f"{px*100:.1f}%"); st.caption(f"Cuota justa: {cuota(px):.2f}")
+        with c3:
+            st.write(f"**Gana {nv}**"); st.title(f"{p2*100:.1f}%"); st.caption(f"Cuota justa: {cuota(p2):.2f}")
 
-jornada_sel = st.sidebar.selectbox(
-    "Seleccionar Jornada:",
-    jornadas,
-    format_func=lambda x: (
-        f"Jornada {x}"
-    ),
-    index=idx_default,
-)
+        x1,x2=st.columns([2,1])
+        with x1:
+            st.markdown(f"<div class='suggestion-box-blue'><b>Pronóstico 1X2:</b> {sug}</div>",unsafe_allow_html=True)
+        with x2:
+            st.markdown(f"<div class='suggestion-box-green'><b>Confianza:</b> {conf}</div>",unsafe_allow_html=True)
 
-with st.sidebar.expander(
-    "ℹ️ Componentes del modelo",
-    expanded=False,
-):
-    st.write("**Activos:**")
-    st.write("• Tabla de rendimiento")
-    st.write("• Apertura + Clausura")
-    st.write("• Forma últimos 5 partidos")
-    st.write("• Elo histórico")
-    st.write("• Localía")
-    st.write("• Altitud")
-    st.write("• Rivalidades")
-    st.write("• Poisson + Dixon-Coles")
-    st.caption(
-        "Los campos xG del Excel no se utilizan: "
-        "no son xG reales basados en ocasiones de gol."
-    )
-
-df_f = st.session_state.df_partidos[
-    st.session_state.df_partidos[
-        "jornada_num"
-    ].astype(str) == str(jornada_sel)
-].copy().reset_index(drop=True)
-
-tab_pred, tab_update = st.tabs(
-    [
-        f"📊 Pronósticos Jornada {jornada_sel}",
-        "📝 Actualizar Resultados y Marcadores",
-    ]
-)
-
-
-# =========================================================
-# PRONÓSTICOS
-# =========================================================
-with tab_pred:
-    st.subheader(
-        f"Jornada {jornada_sel} — Pronósticos ({tabla_ref})"
-    )
-
-    if df_f.empty:
-        st.warning(
-            "No hay partidos en esta jornada."
-        )
-
-    for idx in range(len(df_f)):
-        row = df_f.iloc[idx]
-
-        eq_loc = row["local_std"]
-        eq_vis = row["visita_std"]
-
-        nombre_loc = str(
-            row["local"]
-        ).strip()
-        nombre_vis = str(
-            row["visita"]
-        ).strip()
-
-        fecha = str(
-            row.get("fecha_str", "")
-        ).split(" ")[0]
-
-        hora = str(
-            row.get("hora", "15:00")
-        )
-
-        try:
-            r = calcular_dixon_coles_v2(
-                eq_loc,
-                eq_vis,
-                df_tabla_act,
-                st.session_state.df_geo,
-                historial,
-                elo,
-                partidos_elo,
-            )
-        except Exception as e:
-            st.error(
-                f"Error en {nombre_loc} vs "
-                f"{nombre_vis}: {e}"
-            )
-            continue
-
-        p_loc = r["p_local"]
-        p_emp = r["p_empate"]
-        p_vis = r["p_visita"]
-        p_over = r["p_over25"]
-        p_under = r["p_under25"]
-        p_btts_si = r["p_btts_si"]
-        p_btts_no = r["p_btts_no"]
-
-        sug, conf = generar_sugerencia(
-            p_loc,
-            p_emp,
-            p_vis,
-            nombre_loc,
-            nombre_vis,
-        )
-
-        sug_goles = (
-            "Más de 2.5 Goles (+2.5)"
-            if p_over > p_under
-            else "Menos de 2.5 Goles (-2.5)"
-        )
-
-        conf_goles = nivel_confianza(
-            max(p_over, p_under)
-        )
-
-        sug_btts = (
-            "Ambos Equipos SÍ Anotan"
-            if p_btts_si > p_btts_no
-            else "Ambos Equipos NO Anotan"
-        )
-
-        conf_btts = nivel_confianza(
-            max(p_btts_si, p_btts_no)
-        )
-
-        st.markdown(
-            f"### 🏟️ {nombre_loc} vs {nombre_vis} | "
-            f"{r['ciudad_local']} "
-            f"({int(r['altitud'])} msnm)"
-        )
-
-        st.caption(
-            f"📅 {fecha} | 🕒 {hora}"
-        )
+        m1,m2,m3,m4=st.columns(4)
+        with m1:
+            st.metric("Elo Local",f"{r['elo_local']:.0f}"); st.caption(f"Visita: {r['elo_visita']:.0f}")
+        with m2:
+            st.metric("Forma Local",f"{r['forma_local']['ppg']:.2f}"); st.caption(f"Visita: {r['forma_visita']['ppg']:.2f} pts/pj")
+        with m3:
+            hh=r["h2h"]; st.metric("H2H usados",hh["n"])
+            st.caption(f"{hh['local_w']} G · {hh['draw']} E · {hh['visit_w']} G")
+        with m4:
+            st.metric("Peso H2H",f"{r['peso_h2h']*100:.1f}%")
+            st.caption("Ajuste limitado")
 
         if r["rivalidad"]:
-            st.info(
-                f"🔥 **{r['nombre_rivalidad']}** — "
-                "se modera la influencia de la "
-                "diferencia de fuerza; no se fuerza "
-                "un 50/50."
-            )
+            st.info(f"🔥 **{r['rivalidad']}**: se modera el peso de la diferencia de fuerza.")
 
-        c1, c2, c3 = st.columns(3)
+        if r["h2h"]["n"]:
+            st.write(f"**H2H últimos {r['h2h']['n']}:** {r['h2h']['local_w']} victorias {nl} · {r['h2h']['draw']} empates · {r['h2h']['visit_w']} victorias {nv}.")
+            st.caption(f"H2H con {nl} como local: {r['h2h']['same_n']}.")
 
-        with c1:
-            st.write(
-                f"**Gana {nombre_loc}**"
-            )
-            st.title(
-                f"{p_loc * 100:.1f}%"
-            )
-            st.caption(
-                f"Cuota justa: "
-                f"{1 / max(p_loc, 0.001):.2f}"
-            )
+        g1,g2=st.columns(2)
+        with g1:
+            st.markdown("#### ⚽ Over / Under 2.5")
+            st.write(f"Más de 2.5: **{r['over']*100:.1f}%**"); st.progress(float(r["over"]))
+            st.caption(f"Cuota justa: {cuota(r['over']):.2f}")
+            st.write(f"Menos de 2.5: **{r['under']*100:.1f}%**"); st.progress(float(r["under"]))
+            st.caption(f"Cuota justa: {cuota(r['under']):.2f}")
+            st.markdown(f"<div class='suggestion-box-blue'><b>Sugerido:</b> {'Más de 2.5' if r['over']>=r['under'] else 'Menos de 2.5'}</div>",unsafe_allow_html=True)
+            st.caption(f"Confianza: {fg}")
+        with g2:
+            st.markdown("#### 🔥 Ambos equipos anotan")
+            st.write(f"Sí: **{r['btts']*100:.1f}%**"); st.progress(float(r["btts"]))
+            st.caption(f"Cuota justa: {cuota(r['btts']):.2f}")
+            st.write(f"No: **{r['no_btts']*100:.1f}%**"); st.progress(float(r["no_btts"]))
+            st.caption(f"Cuota justa: {cuota(r['no_btts']):.2f}")
+            st.markdown(f"<div class='suggestion-box-blue'><b>Sugerido:</b> {'BTTS Sí' if r['btts']>=r['no_btts'] else 'BTTS No'}</div>",unsafe_allow_html=True)
+            st.caption(f"Confianza: {fb}")
 
-        with c2:
-            st.write("**Empate**")
-            st.title(
-                f"{p_emp * 100:.1f}%"
-            )
-            st.caption(
-                f"Cuota justa: "
-                f"{1 / max(p_emp, 0.001):.2f}"
-            )
-
-        with c3:
-            st.write(
-                f"**Gana {nombre_vis}**"
-            )
-            st.title(
-                f"{p_vis * 100:.1f}%"
-            )
-            st.caption(
-                f"Cuota justa: "
-                f"{1 / max(p_vis, 0.001):.2f}"
-            )
-
-        s1, s2 = st.columns([2, 1])
-
-        with s1:
-            st.markdown(
-                f"<div class='suggestion-box-blue'>"
-                f"<b>Pronóstico 1X2:</b> {sug}"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-        with s2:
-            st.markdown(
-                f"<div class='suggestion-box-green'>"
-                f"<b>Confianza:</b> {conf}"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-        cg, cb = st.columns(2)
-
-        with cg:
-            st.markdown(
-                "#### ⚽ Mercado de Goles"
-            )
-
-            st.write(
-                f"**Más de 2.5:** "
-                f"{p_over * 100:.1f}%"
-            )
-            st.progress(float(p_over))
-
-            st.write(
-                f"**Menos de 2.5:** "
-                f"{p_under * 100:.1f}%"
-            )
-            st.progress(float(p_under))
-
-            st.markdown(
-                f"<div class='suggestion-box-blue'>"
-                f"<b>Pronóstico:</b> "
-                f"{sug_goles}</div>",
-                unsafe_allow_html=True,
-            )
-
-            st.caption(
-                f"🎯 Confianza: {conf_goles}"
-            )
-
-        with cb:
-            st.markdown(
-                "#### 🔥 Ambos Equipos Anotan"
-            )
-
-            st.write(
-                f"**Sí:** "
-                f"{p_btts_si * 100:.1f}%"
-            )
-            st.progress(float(p_btts_si))
-
-            st.write(
-                f"**No:** "
-                f"{p_btts_no * 100:.1f}%"
-            )
-            st.progress(float(p_btts_no))
-
-            st.markdown(
-                f"<div class='suggestion-box-blue'>"
-                f"<b>Pronóstico:</b> "
-                f"{sug_btts}</div>",
-                unsafe_allow_html=True,
-            )
-
-            st.caption(
-                f"🎯 Confianza: {conf_btts}"
-            )
-
-        with st.expander(
-            "🔎 Detalle del modelo"
-        ):
-            d1, d2, d3, d4 = st.columns(4)
-
-            with d1:
-                st.metric(
-                    "Elo local",
-                    f"{r['elo_local']:.0f}",
-                )
-                st.metric(
-                    "Elo visita",
-                    f"{r['elo_visita']:.0f}",
-                )
-
-            with d2:
-                st.metric(
-                    "Forma local",
-                    f"{r['forma_local']['puntos_promedio']:.2f}",
-                )
-                st.metric(
-                    "Forma visita",
-                    f"{r['forma_visita']['puntos_promedio']:.2f}",
-                )
-
-            with d3:
-                st.metric(
-                    "λ goles local",
-                    f"{r['lambda_local']:.2f}",
-                )
-                st.metric(
-                    "μ goles visita",
-                    f"{r['mu_visita']:.2f}",
-                )
-
-            with d4:
-                st.metric(
-                    "Marcador modal",
-                    r["marcador_modal"],
-                )
-                st.metric(
-                    "Diferencia Elo",
-                    f"{r['dif_elo']:+.0f}",
-                )
-
-            st.caption(
-                "λ y μ son parámetros Poisson del modelo; "
-                "no representan xG de un proveedor externo."
-            )
-
+        st.write(f"**🎯 Marcador modal:** {r['marcador_modal']} ({r['prob_modal']*100:.1f}%)")
+        st.caption(f"λ Local={r['lambda']:.2f} | μ Visita={r['mu']:.2f}")
         st.divider()
 
-
 # =========================================================
-# ACTUALIZACIÓN DE RESULTADOS
+# 14. ACTUALIZACIÓN
 # =========================================================
-with tab_update:
-    st.subheader(
-        f"⚙️ Actualización — Jornada {jornada_sel}"
-    )
+with tab2:
+    st.subheader(f"⚙️ Actualizar Jornada {jornada}")
 
-    st.info(
-        "Los resultados marcados como jugados quedan "
-        "disponibles para forma y Elo en el siguiente "
-        "cálculo."
-    )
-
-    with st.form(
-        key=f"form_jornada_{jornada_sel}"
-    ):
-        actualizaciones = []
-
-        for idx in range(len(df_f)):
-            row = df_f.iloc[idx]
-
-            c1, c2, c3, c4, c5 = st.columns(
-                [3, 1, 1, 3, 2]
-            )
-
-            with c1:
-                st.write(
-                    f"**{row['local']}**"
-                )
-
+    with st.form(f"form_{jornada}"):
+        cambios=[]
+        for i,row in dfj.iterrows():
+            c1,c2,c3,c4,c5=st.columns([3,1,1,3,2])
+            with c1: st.write(f"**{row['local']}**")
             with c2:
-                val_loc = (
-                    int(row["goles_local"])
-                    if pd.notnull(
-                        row["goles_local"]
-                    )
-                    else 0
-                )
-
-                gl = st.number_input(
-                    f"GL_{idx}",
-                    min_value=0,
-                    max_value=15,
-                    value=val_loc,
-                    key=f"gl_{jornada_sel}_{idx}",
-                    label_visibility="collapsed",
-                )
-
+                gl=st.number_input("GL",0,15,int(row["goles_local"]) if pd.notna(row["goles_local"]) else 0,key=f"gl_{jornada}_{i}",label_visibility="collapsed")
             with c3:
-                val_vis = (
-                    int(row["goles_visita"])
-                    if pd.notnull(
-                        row["goles_visita"]
-                    )
-                    else 0
-                )
-
-                gv = st.number_input(
-                    f"GV_{idx}",
-                    min_value=0,
-                    max_value=15,
-                    value=val_vis,
-                    key=f"gv_{jornada_sel}_{idx}",
-                    label_visibility="collapsed",
-                )
-
-            with c4:
-                st.write(
-                    f"**{row['visita']}**"
-                )
-
+                gv=st.number_input("GV",0,15,int(row["goles_visita"]) if pd.notna(row["goles_visita"]) else 0,key=f"gv_{jornada}_{i}",label_visibility="collapsed")
+            with c4: st.write(f"**{row['visita']}**")
             with c5:
-                jug = st.checkbox(
-                    "Jugado",
-                    value=bool(
-                        row["jugado"]
-                    ),
-                    key=f"jug_{jornada_sel}_{idx}",
-                )
+                jug=st.checkbox("Jugado",bool(row["jugado"]),key=f"jug_{jornada}_{i}")
+            cambios.append((row["local"],row["visita"],gl,gv,jug))
+        enviar=st.form_submit_button("💾 Aplicar y Guardar")
 
-            actualizaciones.append(
-                (
-                    row["local"],
-                    row["visita"],
-                    gl,
-                    gv,
-                    jug,
-                )
-            )
+    if enviar:
+        for loc,vis,gl,gv,jug in cambios:
+            mask=(st.session_state.df_partidos["jornada_num"].astype(str)==str(jornada))&(st.session_state.df_partidos["local"]==loc)&(st.session_state.df_partidos["visita"]==vis)
+            st.session_state.df_partidos.loc[mask,"goles_local"]=gl
+            st.session_state.df_partidos.loc[mask,"goles_visita"]=gv
+            st.session_state.df_partidos.loc[mask,"jugado"]=jug
 
-        submit = st.form_submit_button(
-            "💾 Aplicar y Guardar Marcadores"
-        )
-
-    if submit:
-        for (
-            loc,
-            vis,
-            gl,
-            gv,
-            jug,
-        ) in actualizaciones:
-
-            mask = (
-                st.session_state.df_partidos[
-                    "jornada_num"
-                ].astype(str).eq(
-                    str(jornada_sel)
-                )
-                &
-                st.session_state.df_partidos[
-                    "local"
-                ].astype(str).eq(
-                    str(loc)
-                )
-                &
-                st.session_state.df_partidos[
-                    "visita"
-                ].astype(str).eq(
-                    str(vis)
-                )
-            )
-
-            st.session_state.df_partidos.loc[
-                mask, "goles_local"
-            ] = gl
-
-            st.session_state.df_partidos.loc[
-                mask, "goles_visita"
-            ] = gv
-
-            st.session_state.df_partidos.loc[
-                mask, "jugado"
-            ] = jug
-
-        if os.path.exists(ruta_local):
-            ok, msg = guardar_cambios_excel(
-                st.session_state.df_partidos,
-                st.session_state.df_acum,
-                st.session_state.df_claus,
-                st.session_state.df_geo,
-                ruta_local,
-                st.session_state.df_apertura,
-                st.session_state.df_clausura_res,
-            )
-
-            if ok:
-                st.success(
-                    "¡Marcadores guardados correctamente!"
-                )
-            else:
-                st.warning(
-                    "La sesión se actualizó, pero no "
-                    f"se pudo escribir el archivo: {msg}"
-                )
+        nuevos=preparar_partidos(st.session_state.df_partidos)
+        jugados=nuevos[nuevos["jugado_calc"]].copy()
+        historicos=st.session_state.df_resultados.copy()
+        if historicos is None or historicos.empty:
+            st.session_state.df_resultados=jugados
         else:
-            st.success(
-                "¡Marcadores actualizados en la sesión!"
-            )
+            # Reemplaza resultados de partidos que ya estaban en la jornada.
+            claves=set(zip(jugados["fecha"],jugados["local_std"],jugados["visita_std"]))
+            historicos=historicos[~historicos.apply(lambda x:(x["fecha"],x["local_std"],x["visita_std"]) in claves,axis=1)]
+            st.session_state.df_resultados=pd.concat([historicos,jugados],ignore_index=True).sort_values("fecha").reset_index(drop=True)
 
+        if os.path.exists(ruta) and upload is None:
+            ok,msg=guardar_excel(st.session_state.df_partidos,st.session_state.df_acum,st.session_state.df_claus,st.session_state.df_geo,st.session_state.df_h2h,st.session_state.df_resultados,ruta)
+            st.success("✅ Datos guardados en Liga1_2026.xlsx." if ok else f"⚠️ {msg}")
+        else:
+            st.success("✅ Sesión actualizada.")
         st.rerun()
 
-    st.write("---")
-    st.markdown(
-        "#### 📥 Exportar copia de seguridad"
-    )
-
-    excel_bytes = generar_bytes_excel(
-        st.session_state.df_partidos,
-        st.session_state.df_acum,
-        st.session_state.df_claus,
-        st.session_state.df_geo,
-        st.session_state.df_apertura,
-        st.session_state.df_clausura_res,
-    )
-
+    st.markdown("#### 📥 Copia de seguridad")
     st.download_button(
-        label="Descargar Liga1_2026_Actualizado.xlsx",
-        data=excel_bytes,
+        "Descargar Liga1_2026_Actualizado.xlsx",
+        data=exportar_excel(st.session_state.df_partidos,st.session_state.df_acum,st.session_state.df_claus,st.session_state.df_geo,st.session_state.df_h2h,st.session_state.df_resultados),
         file_name="Liga1_2026_Actualizado.xlsx",
-        mime=(
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
-        ),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+# =========================================================
+# 15. DIAGNÓSTICO
+# =========================================================
+with tab3:
+    st.subheader("🔎 Diagnóstico")
+    a1,a2,a3,a4=st.columns(4)
+    with a1: st.metric("Partidos históricos",len(st.session_state.df_resultados))
+    with a2: st.metric("H2H",len(st.session_state.df_h2h))
+    with a3:
+        equipos=set(st.session_state.df_resultados["local_std"])|set(st.session_state.df_resultados["visita_std"]) if not st.session_state.df_resultados.empty else set()
+        st.metric("Equipos",len(equipos))
+    with a4: st.metric("Equipos con Elo",len(calcular_elo_historico(st.session_state.df_resultados)))
+
+    st.markdown("### 📚 Historial H2H")
+    if st.session_state.df_h2h.empty:
+        st.warning("No hay H2H cargados. La hoja debe llamarse Historial_H2H.")
+        st.code("Fecha | Local | Visitante | GL | GV | Temporada")
+    else:
+        cols=[c for c in ["fecha","local","visita","goles_local","goles_visita","temporada"] if c in st.session_state.df_h2h.columns]
+        st.dataframe(st.session_state.df_h2h[cols].tail(20),use_container_width=True,hide_index=True)
+
+    st.markdown("### ⚠️ Verificación de nombres")
+    nombres=sorted(set(st.session_state.df_partidos["local"].astype(str))|set(st.session_state.df_partidos["visita"].astype(str)))
+    ver=pd.DataFrame([{"Nombre original":n,"Nombre estándar":estandarizar_nombre(n)} for n in nombres])
+    st.dataframe(ver,use_container_width=True,hide_index=True)
+    st.info("Verifica especialmente: FC Cajamarca ≠ UTC y Atlético Grau ≠ Alianza Atlético.")
