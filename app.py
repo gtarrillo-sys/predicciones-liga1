@@ -44,8 +44,6 @@ st.set_page_config(
 
 ARCHIVO_DEFECTO = "Liga1_2026.xlsx"
 
-os.environ["GOOGLE_API_KEY"] = "AQ.Ab8RN6KL0KwdPj6BULSBnR1nUQDJjQNUjTTuNAq_5R7ROHcvYw"
-
 # Parámetros calibrables
 ELO_INICIAL = 1500.0
 ELO_K = 24.0
