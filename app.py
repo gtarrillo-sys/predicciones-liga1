@@ -1173,7 +1173,7 @@ def numero_jornada(x):
 
 jornadas = sorted(jornadas, key=numero_jornada)
 
-    # Filtrado directo
+      # Filtrado directo sin errores de espacios
     jornadas_validas = [j for j in jornadas if numero_jornada(j) not in]
     if not jornadas_validas: jornadas_validas = ["Jornada 10", "Jornada 11"]
     preferidas = [j for j in jornadas_validas if numero_jornada(j) in]
