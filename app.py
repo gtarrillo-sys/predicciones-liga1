@@ -28,8 +28,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from scipy.stats import poisson
-from crewai import Agent, Task, Crew
-from langchain_google_genai import ChatGoogleGenerativeAI
+import google.generativeai as genai
 
 
 # =========================================================
@@ -43,6 +42,29 @@ st.set_page_config(
 )
 
 ARCHIVO_DEFECTO = "Liga1_2026.xlsx"
+
+def obtener_analisis_ia(local, visita, altitud, desc_l, desc_v, p_l, p_e, p_v):
+    api_key = st.secrets.get("GOOGLE_API_KEY")
+    if not api_key:
+        return "Configura la clave GOOGLE_API_KEY en los Secrets de Streamlit para activar este análisis."
+        
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    prompt = f"""
+    Eres un analista deportivo experto en la Liga 1 peruana.
+    Analiza brevemente el partido: {local} vs {visita}.
+    - Datos estadísticos: Gana Local {p_l}%, Empate {p_e}%, Gana Visita {p_v}%.
+    - Altitud del estadio: {altitud} msnm.
+    - Días de descanso: Local ({desc_l} días) vs Visita ({desc_v} días).
+    
+    Redacta una conclusión táctica muy corta de 3 líneas (en un solo párrafo) que sirva como veredicto del impacto físico de la altura o descanso en el resultado.
+    """
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return "Error al generar el análisis táctico de IA."
 
 # Parámetros calibrables
 ELO_INICIAL = 1500.0
