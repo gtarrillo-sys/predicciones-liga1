@@ -1173,7 +1173,7 @@ def numero_jornada(x):
 
 jornadas = sorted(jornadas, key=numero_jornada)
 
-    # === CORRECCIÓN INLINE COMPLETA ===
+    # === REEMPLAZO DEFINITIVO CON SINTAXIS COMPLETA ===
     jornadas_validas = [j for j in jornadas if numero_jornada(j) not in]
     if not jornadas_validas:
         jornadas_validas = ["Jornada 10", "Jornada 11"]
@@ -1187,7 +1187,6 @@ jornadas = sorted(jornadas, key=numero_jornada)
         jornadas_validas,
         index=jornadas_validas.index(jornada_default) if (jornada_default in jornadas_validas) else 0,
     )
-
 
 tabla_opcion = st.sidebar.radio(
     "Tabla de referencia",
