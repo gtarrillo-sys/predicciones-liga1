@@ -208,16 +208,8 @@ ALTITUDES_DEFAULT = {
 # 4. RESULTADOS DE FECHA 9 PROPORCIONADOS POR EL USUARIO
 # =========================================================
 
-RESULTADOS_FECHA_9 = [
-    ("Jornada 9", "2026-09-11", "UTC Cajamarca", "Juan Pablo II College", 1, 2),
-    ("Jornada 9", "2026-09-11", "Cusco FC", "Melgar", 0, 1),
-    ("Jornada 9", "2026-09-12", "Chankas CYC", "FC Cajamarca", 1, 2),
-    ("Jornada 9", "2026-09-12", "Comerciantes Unidos", "Sport Huancayo", 0, 1),
-    ("Jornada 9", "2026-09-12", "CD Moquegua", "Sporting Cristal", 1, 2),
-    ("Jornada 9", "2026-09-12", "Alianza Lima", "Universitario", 1, 2),
-    ("Jornada 9", "2026-09-13", "Sport Boys", "Deportivo Garcilaso", 1, 0),
-    ("Jornada 9", "2026-09-13", "Atlético Grau", "Alianza Atlético", 3, 1),
-]
+# Esta lista ya se encuentra integrada en las hojas del archivo Excel.
+RESULTADOS_FECHA_9 = []
 
 
 # =========================================================
