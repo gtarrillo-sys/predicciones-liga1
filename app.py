@@ -1173,19 +1173,16 @@ def numero_jornada(x):
 
 jornadas = sorted(jornadas, key=numero_jornada)
 
-         # === CORRECCIÓN DEFINITIVA DE ALINEACIÓN ===
-jornadas_validas = [j for j in jornadas if numero_jornada(j) not in]
-    
-if not jornadas_validas:
+    # === CORRECCIÓN INLINE COMPLETA ===
+    jornadas_validas = [j for j in jornadas if numero_jornada(j) not in]
+    if not jornadas_validas:
         jornadas_validas = ["Jornada 10", "Jornada 11"]
-        
-preferidas = [j for j in jornadas_validas if numero_jornada(j) in]
+    preferidas = [j for j in jornadas_validas if numero_jornada(j) in]
     if preferidas:
         jornada_default = preferidas[0]
     else:
         jornada_default = jornadas_validas[0] if jornadas_validas else ""
-
-jornada = st.sidebar.selectbox(
+    jornada = st.sidebar.selectbox(
         "Seleccionar jornada",
         jornadas_validas,
         index=jornadas_validas.index(jornada_default) if (jornada_default in jornadas_validas) else 0,
