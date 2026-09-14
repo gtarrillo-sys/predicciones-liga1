@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from scipy.stats import poisson
+from crewai import Agent, Task, Crew
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 
 # =========================================================
@@ -41,6 +43,8 @@ st.set_page_config(
 )
 
 ARCHIVO_DEFECTO = "Liga1_2026.xlsx"
+
+os.environ["GOOGLE_API_KEY"] = "AQ.Ab8RN6KL0KwdPj6BULSBnR1nUQDJjQNUjTTuNAq_5R7ROHcvYw"
 
 # Parámetros calibrables
 ELO_INICIAL = 1500.0
