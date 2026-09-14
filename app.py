@@ -1173,28 +1173,24 @@ def numero_jornada(x):
 
 jornadas = sorted(jornadas, key=numero_jornada)
 
-    # === REEMPLAZO LOGÍSTICO COMPLETO (LÍNEAS 1176 A 1190) ===
-    # Filtramos la lista general de jornadas para ignorar de forma estricta la 9 y anteriores
+       # === FILTRADO ESTRICTO DE JORNADAS ACTIVAS ===
     jornadas_validas = [j for j in jornadas if numero_jornada(j) not in]
     
-    # Si por alguna razón la lista queda vacía, aseguramos tus jornadas vigentes
     if not jornadas_validas:
         jornadas_validas = ["Jornada 10", "Jornada 11"]
         
-    # Establecemos cuál será la jornada seleccionada por defecto al abrir la aplicación
     preferidas = [j for j in jornadas_validas if numero_jornada(j) in]
     if preferidas:
         jornada_default = preferidas[0]
     else:
         jornada_default = jornadas_validas[0] if jornadas_validas else ""
 
-    # Renderizado final del menú desplegable limpio y libre de duplicados
+    # Selector visual limpio en la barra lateral
     jornada = st.sidebar.selectbox(
         "Seleccionar jornada",
         jornadas_validas,
-        index=jornadas_validas.index(jornada_default) if _j_def := 'jornada_default' in locals() and jornada_default in jornadas_validas else 0,
+        index=jornadas_validas.index(jornada_default) if (jornada_default in jornadas_validas) else 0,
     )
-
 
 tabla_opcion = st.sidebar.radio(
     "Tabla de referencia",
