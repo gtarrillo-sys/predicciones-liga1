@@ -1628,3 +1628,83 @@ with st.expander("🔎 Diagnóstico del modelo"):
         "realizado sobre el histórico disponible no mostró mejora con un "
         "peso fijo. Puede probarse experimentalmente desde la barra lateral."
     )
+# =========================================================
+# SECCIÓN PREMIUM: DIAGNÓSTICO AVANZADO CON IA GEMINI
+# =========================================================
+
+st.markdown("---")
+st.markdown("### 🏆 Panel de Análisis Avanzado e Inteligencia Artificial")
+
+# 1. Buscamos si hay un partido seleccionado en la interfaz
+# Si tu selector de la barra lateral guarda el partido en una variable, la usamos.
+# Si no, tomamos de forma automática el primer partido de la jornada elegida para el diagnóstico.
+if 'partidos_filtrados' in locals() and not partidos_filtrados.empty:
+    # Usamos un selector dinámico al final para que el usuario elija qué partido auditar con IA
+    partido_ia = st.selectbox(
+        "🔍 Selecciona un partido de la jornada para generar el informe táctico de la IA:",
+        partidos_filtrados.apply(lambda r: f"{r['Local']} vs {r['Visita']}", axis=1)
+    )
+    
+    # Extraemos la fila exacta del partido elegido
+    fila_partido = partidos_filtrados[partidos_filtrados.apply(lambda r: f"{r['Local']} vs {r['Visita']}", axis=1) == partido_ia].iloc[0]
+    
+    # Intentamos recuperar las variables o asignamos valores por defecto si no existen en la fila
+    loc = fila_partido['Local']
+    vis = fila_partido['Visita']
+    alt_local = fila_partido.get('Altitud_Local', ALTITUDES_DEFAULT.get(normalizar_nombre(loc), (150,))[0])
+    delta_altitud = fila_partido.get('Delta_Altitud_msnm', 0)
+    d_local = fila_partido.get('Dias_Descanso_Local', 7)
+    d_visita = fila_partido.get('Dias_Descanso_Visita', 7)
+    
+    # Recuperamos las probabilidades que calculó tu distribución de Poisson previamente en el script
+    # Si las variables globales no están accesibles directamente, se asume una estimación referencial
+    p_L = locals().get('prob_L', 0.45) * 100
+    p_E = locals().get('prob_E', 0.30) * 100
+    p_V = locals().get('prob_V', 0.25) * 100
+    
+    # --- RENDERIZADO DE LA TARJETA PREMIUM ---
+    with st.container(border=True):
+        st.markdown(f"#### 🏟️ Análisis de Campo: {loc} vs {vis}")
+        st.caption(
+            f"🏔️ Altitud de la Sede: {alt_local} msnm | "
+            f"📉 Impacto Geográfico (Delta): {delta_altitud}m | "
+            f"🏃 Descanso: {d_local}d (Local) vs {d_visita}d (Visita)"
+        )
+        
+        # Estructura de pestañas para modernizar la visualización
+        tab_metricas, tab_computo_ia = st.tabs(["📊 Probabilidades Críticas", "🤖 Reporte Técnico Gemini Flash"])
+        
+        with tab_metricas:
+            st.write("")
+            col_l, col_e, col_v = st.columns(3)
+            with col_l:
+                st.metric(label=f"⚽ Probabilidad Gana {loc}", value=f"{p_L:.1f}%")
+            with col_e:
+                st.metric(label="🤝 Probabilidad Empate", value=f"{p_E:.1f}%")
+            with col_v:
+                st.metric(label=f"🏃 Probabilidad Gana {vis}", value=f"{p_V:.1f}%")
+            
+            st.markdown("---")
+            # Recomendación destacada con caja verde de éxito
+            rec_texto = fila_partido.get('Recomendacion', 'Revisar mercados secundarios (Goles/Tarjetas)')
+            st.success(f"🎯 **Sugerencia Analítica:** {rec_texto}")
+            
+        with tab_computo_ia:
+            st.write("")
+            st.markdown("##### 🕵️‍♂️ Veredicto de Rendimiento y Desgaste Físico")
+            
+            # Botón disparador para controlar el consumo de tokens y evitar recargas infinitas
+            if st.button("🤖 Generar Diagnóstico Contextual de IA"):
+                with st.spinner("Gemini Flash está procesando las variables geográficas y de descanso..."):
+                    try:
+                        reporte_final = obtener_analisis_ia(
+                            loc, vis, alt_local, d_local, d_visita,
+                            round(p_L, 1), round(p_E, 1), round(p_V, 1)
+                        )
+                        st.info(reporte_final)
+                    except Exception as error_ia:
+                        st.error("No se pudo conectar con el motor de IA. Verifica tus Secrets en Streamlit.")
+            else:
+                st.caption("Presiona el botón superior para activar los agentes y generar el texto analítico.")
+else:
+    st.info("Selecciona una jornada disponible en el panel para habilitar los diagnósticos avanzados.")
