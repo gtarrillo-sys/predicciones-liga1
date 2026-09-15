@@ -69,7 +69,7 @@ def obtener_analisis_ia(local, visita, altitud, desc_l, desc_v, p_l, p_e, p_v):
 # Parámetros calibrables
 ELO_INICIAL = 1500.0
 ELO_K = 24.0
-ELO_LOCAL = 55.0
+ELO_LOCAL = 15.0
 
 VENTANA_FORMA = 5
 VENTANA_RATES = 8
