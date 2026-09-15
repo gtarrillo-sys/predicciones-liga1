@@ -1159,26 +1159,34 @@ st.sidebar.success(
     f"Histórico utilizado: {len(historico)} partidos"
 )
 
-jornadas = (
-    partidos_raw["_jornada"]
-    .dropna()
-    .astype(str)
-    .unique()
-    .tolist()
-)
-
 def numero_jornada(x):
     m = re.search(r"(\d+)", str(x))
     return int(m.group(1)) if m else 999
 
-jornadas = sorted(jornadas, key=numero_jornada)
+# 1. Identificar únicamente las jornadas con partidos pendientes de jugar
+if 'partidos_raw' in locals() and not partidos_raw.empty:
+    # Buscar filas donde los goles aún sean nulos o vacíos
+    col_goles = 'Goles_Local' if 'Goles_Local' in partidos_raw.columns else 'goles_local'
+    if col_goles in partidos_raw.columns:
+        pendientes = partidos_raw[partidos_raw[col_goles].isna()]
+    else:
+        pendientes = partidos_raw
 
-# Filtrado directo sin errores de espacios
-jornadas_validas = list(jornadas)
-if not jornadas_validas: jornadas_validas = ["Jornada 10", "Jornada 11"]
-preferidas = [j for j in jornadas_validas if numero_jornada(j) in [10, 11]]
-jornada_default = preferidas[0] if preferidas else (jornadas_validas[0] if jornadas_validas else "")
-jornada = st.sidebar.selectbox("Seleccionar jornada", jornadas_validas, index=jornadas_validas.index(jornada_default) if jornada_default in jornadas_validas else 0)
+    col_jor = '_jornada' if '_jornada' in partidos_raw.columns else 'Jornada'
+    j_encontradas = pendientes[col_jor].dropna().astype(str).unique().tolist()
+    jornadas_validas = sorted(j_encontradas, key=numero_jornada)
+else:
+    jornadas_validas = []
+
+# Fallback de seguridad si no detecta pendientes
+if not jornadas_validas:
+    jornadas_validas = ["Jornada 10", "Jornada 11"]
+
+# Definir la jornada seleccionada
+jornada_default = jornadas_validas[0] if jornadas_validas else ""
+index_default = jornadas_validas.index(jornada_default) if jornada_default in jornadas_validas else 0
+
+jornada = st.sidebar.selectbox("Seleccionar jornada", jornadas_validas, index=index_default)
 tabla_opcion = st.sidebar.radio(
     "Tabla de referencia",
     ["Acumulada", "Clausura"],
