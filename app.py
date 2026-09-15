@@ -80,19 +80,19 @@ PRIOR_GA = 1.20
 PRIOR_PESO = 5.0
 
 # Peso de componentes
-PESO_ELO = 0.28
-PESO_FORMA = 0.12
-PESO_TASA = 0.60
+PESO_ELO = 0.45
+PESO_FORMA = 0.25
+PESO_TASA = 0.30
 
 # Altitud: deliberadamente moderada.
 # La ventaja principal de la localía se mantiene separada.
 ALTITUD_REFERENCIA = 1500.0
-ALTITUD_COEF_LOCAL = 0.000035
-ALTITUD_COEF_VISITA = 0.000045
-ALTITUD_MAX_FACTOR = 1.16
-ALTITUD_MIN_VISITA = 0.86
+ALTITUD_COEF_LOCAL = 0.000020
+ALTITUD_COEF_VISITA = 0.000025
+ALTITUD_MAX_FACTOR = 1.10
+ALTITUD_MIN_VISITA = 0.90
 
-RHO_DIXON_COLES = -0.08
+RHO_DIXON_COLES = -0.03
 
 # H2H: por el backtesting realizado, queda en 0 por defecto.
 # Se puede activar experimentalmente desde la barra lateral.
