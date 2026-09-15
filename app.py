@@ -244,13 +244,12 @@ def cargar_excel(fuente):
         "Resultados_Clausura",
         "Tabla_Acumulada",
     ]
+
     faltantes = [h for h in requeridas if h not in hojas]
     if faltantes:
         raise ValueError(f"Faltan hojas obligatorias: {faltantes}")
 
-    partidos = estandarizar_columnas(
-        pd.read_excel(xls, sheet_name="Partidos_Fecha")
-    )
+    partidos = estandarizar_columnas(pd.read_excel(xls, sheet_name="Partidos_Fecha"))
     apertura = estandarizar_columnas(
         pd.read_excel(xls, sheet_name="Resultados_Apertura")
     )
@@ -261,40 +260,31 @@ def cargar_excel(fuente):
         pd.read_excel(xls, sheet_name="Tabla_Acumulada")
     )
 
-    clausura_tabla = (
-        estandarizar_columnas(
-            pd.read_excel(xls, sheet_name="Tabla_Clausura")
+    # 1. LIMPIEZA DE xG APERTURA (Flashscore)
+    if "xg_local" in apertura.columns:
+        apertura["xg_local_clean"] = (
+            apertura["xg_local"].astype(str).str.replace(",", ".").astype(float)
         )
-        if "Tabla_Clausura" in hojas
-        else acumulada.copy()
-    )
-
-    if "Data_Geografica" in hojas:
-        geo = estandarizar_columnas(
-            pd.read_excel(xls, sheet_name="Data_Geografica")
+        apertura["xg_visita_clean"] = (
+            apertura["xg_visita"].astype(str).str.replace(",", ".").astype(float)
         )
-    else:
-        geo = pd.DataFrame()
 
+    # 2. CARGA DE HISTORIAL H2H
+    h2h = pd.DataFrame()
     if "Historial_H2H" in hojas:
         h2h = estandarizar_columnas(
             pd.read_excel(xls, sheet_name="Historial_H2H")
         )
-    else:
-        h2h = pd.DataFrame(
-            columns=["Fecha", "Local", "Visitante", "GL", "GV", "Temporada"]
+
+    # 3. CARGA DE DATA GEOGRÁFICA (Pasto / Clima)
+    geo = pd.DataFrame()
+    if "Data_Geografica" in hojas:
+        geo = estandarizar_columnas(
+            pd.read_excel(xls, sheet_name="Data_Geografica")
         )
 
-    return {
-        "partidos": partidos,
-        "apertura": apertura,
-        "clausura": clausura,
-        "acumulada": acumulada,
-        "tabla_clausura": clausura_tabla,
-        "geo": geo,
-        "h2h": h2h,
-        "hojas": hojas,
-    }
+    # El return debe entregar todas las variables listas
+    return partidos, apertura, clausura, acumulada, geo, h2h
 
 
 # =========================================================
