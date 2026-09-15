@@ -909,6 +909,39 @@ def fuerza_partido(
         "fuerza": fuerza,
     }
 
+def obtener_marcador_modal_ajustado(m, recomendacion, local, visita):
+    """
+    Selecciona el marcador más probable de la matriz Dixon-Coles
+    forzando coherencia lógica con la tendencia de la recomendación.
+    """
+    max_p = -1.0
+    best_score = "1 - 1"
+    
+    rec_upper = recomendacion.upper()
+    loc_upper = local.upper()
+    vis_upper = visita.upper()
+
+    for gl in range(m.shape[0]):
+        for gv in range(m.shape[1]):
+            p = m[gl, gv]
+            
+            # Definir la restricción según la tendencia del pronóstico
+            if ("GANA" in rec_upper and loc_upper in rec_upper) or "1" in rec_upper:
+                condicion = (gl > gv)
+            elif ("GANA" in rec_upper and vis_upper in rec_upper) or "2" in rec_upper:
+                condicion = (gv > gl)
+            elif "1X" in rec_upper:
+                condicion = (gl >= gv)
+            elif "X2" in rec_upper:
+                condicion = (gv >= gl)
+            else:
+                condicion = True
+                
+            if condicion and p > max_p:
+                max_p = p
+                best_score = f"{gl} - {gv}"
+                
+    return best_score
 
 def calcular_probabilidades(
     local,
@@ -927,20 +960,17 @@ def calcular_probabilidades(
 
     m = matriz_dixon_coles(f["lambda"], f["mu"])
 
-    # Convención correcta:
-    # filas = goles local; columnas = goles visitante.
+    # Probabilidades de victoria/empate/derrota
     p_local = float(np.tril(m, -1).sum())
     p_empate = float(np.trace(m))
     p_visita = float(np.triu(m, 1).sum())
 
-    # H2H experimental: solamente si se activa manualmente.
+    # H2H experimental
     h2h_idx, h2h_df = h2h_indice(
         df_h2h, local, visita, fecha_partido
     )
 
     if peso_h2h > 0 and h2h_idx is not None and len(h2h_df) >= 3:
-        # Mezcla conservadora y explícita.
-        # El resto conserva la distribución del modelo.
         h2h_local = 0.34 + 0.32 * h2h_idx
         h2h_emp = 0.30
         h2h_vis = 1.0 - h2h_local - h2h_emp
@@ -960,6 +990,7 @@ def calcular_probabilidades(
     p_empate /= total
     p_visita /= total
 
+    # Mercados secundarios
     p_under = float(
         sum(
             m[i, j]
@@ -973,9 +1004,11 @@ def calcular_probabilidades(
     p_btts_si = float(m[1:, 1:].sum())
     p_btts_no = 1.0 - p_btts_si
 
-    # Marcador modal.
-    ix = np.unravel_index(np.argmax(m), m.shape)
-    marcador = f"{ix[0]} - {ix[1]}"
+    # Obtener primero la recomendación 1X2 para condicionar el marcador
+    rec, conf = recomendacion_1x2(p_local, p_empate, p_visita, local, visita)
+
+    # Marcador modal ajustado
+    marcador = obtener_marcador_modal_ajustado(m, rec, local, visita)
 
     return {
         **f,
