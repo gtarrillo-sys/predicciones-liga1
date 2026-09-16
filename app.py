@@ -5,7 +5,7 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO CSS CORPORATIVO (VERDE QUIPUS)
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO CSS CORPORATIVO (MULTILÍNEA Y CUADRÍCULA)
 # ==============================================================================
 st.set_page_config(
     page_title="Predicción Liga 1 Perú - Quipus Data",
@@ -13,7 +13,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# Estilo CSS para aplicar la cuadrícula y el verde corporativo exacto en encabezados
 st.markdown(
     """
     <style>
@@ -21,6 +20,8 @@ st.markdown(
         border: 1px solid #9ca592 !important;
         border-collapse: collapse !important;
         text-align: center !important;
+        white-space: normal !important;
+        word-break: break-word !important;
     }
     th {
         background-color: #7b8870 !important; /* Verde corporativo Quipus Data */
@@ -113,7 +114,6 @@ def calcular_tasa_ponderada(df_historial, equipo, es_local=True):
 def obtener_marcador_y_recomendacion(
     matriz, p_loc, p_emp, p_vis, loc, vis, p_over25, p_btts
 ):
-  # Determinar el ganador base
   if p_loc >= p_vis and p_loc >= p_emp:
     ganador = "Local"
     equipo_ganador = loc
@@ -124,7 +124,6 @@ def obtener_marcador_y_recomendacion(
     ganador = "Empate"
     equipo_ganador = "Empate"
 
-  # Lógica de Recomendación Combinada
   if ganador != "Empate":
     rec = f"Gana {equipo_ganador}"
     if p_over25 >= 50.0:
@@ -134,7 +133,6 @@ def obtener_marcador_y_recomendacion(
   else:
     rec = "Empate"
 
-  # Cálculo del marcador modal exacto
   max_p = -1.0
   best_i, best_j = 1, 0
 
