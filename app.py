@@ -309,6 +309,17 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
+# Diccionario para traducir los días al español de manera segura
+dias_espanol = {
+    "Monday": "Lunes",
+    "Tuesday": "Martes",
+    "Wednesday": "Miércoles",
+    "Thursday": "Jueves",
+    "Friday": "Viernes",
+    "Saturday": "Sábado",
+    "Sunday": "Domingo",
+}
+
 if os.path.exists(EXCEL_PATH):
   try:
     datos = cargar_excel(EXCEL_PATH)
@@ -350,6 +361,16 @@ if os.path.exists(EXCEL_PATH):
       fecha_p = (
           row[col_fecha] if col_fecha and col_fecha in row else "Por definir"
       )
+
+      # Extracción y conversión del día de la semana en español
+      nombre_dia = "Por definir"
+      if pd.notna(fecha_p):
+        try:
+          dt_val = pd.to_datetime(fecha_p)
+          dia_ingles = dt_val.strftime("%A")
+          nombre_dia = dias_espanol.get(dia_ingles, "Por definir")
+        except Exception:
+          nombre_dia = "Por definir"
 
       hora_raw = row[col_hora] if col_hora and col_hora in row else None
       if pd.notna(hora_raw) and hora_raw is not None:
@@ -414,6 +435,7 @@ if os.path.exists(EXCEL_PATH):
           fecha_limpia = f"{partes[2]}/{partes[1]}/{partes[0]}"
 
       resultados.append({
+          "Día": nombre_dia,
           "Fecha": fecha_limpia,
           "Hora": hora_str,
           "Local": loc,
@@ -434,8 +456,9 @@ if os.path.exists(EXCEL_PATH):
         0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob]
     )
 
+    # Vista resumida usando "Día" en lugar de "Fecha" numérica
     df_resumido = df_pronosticos[
-        ["🔥", "Fecha", "Hora", "Local", "Visita", "Marcador_Modal", "Recomendacion"]
+        ["🔥", "Día", "Hora", "Local", "Visita", "Marcador_Modal", "Recomendacion"]
     ].copy()
 
 
@@ -498,7 +521,8 @@ if os.path.exists(EXCEL_PATH):
 
     if tipo_vista == "Vista Resumida":
       st.markdown(
-          "*Vista ligera optimizada con los datos clave para teléfonos móviles.*"
+          "*Vista ligera optimizada con los días de la semana y datos clave"
+          " para móviles.*"
       )
       st.dataframe(
           estilo_tabla_resumida, use_container_width=True, hide_index=True
