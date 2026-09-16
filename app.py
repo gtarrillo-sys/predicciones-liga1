@@ -13,7 +13,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Búsqueda flexible del logo de Quipus
 logo_encontrado = None
 for posible_nombre in ["logo.png", "logo_quipus.png", "quipus_logo.png", "logo-quipus.png"]:
     if os.path.exists(posible_nombre):
@@ -56,10 +55,6 @@ def matriz_dixon_coles(lambda_, mu, rho=0.13, max_goles=6):
     return matriz
 
 def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_over25):
-    """
-    Selecciona de manera estricta y coherente el marcador modal y la recomendación
-    alineados con las probabilidades de 1X2 y los goles esperados.
-    """
     if p_loc >= p_vis and p_loc >= p_emp:
         ganador = "Local"
         rec = f"Gana {loc}"
@@ -226,7 +221,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
     return f_loc, f_vis
 
 # ==============================================================================
-# 4. EJECUCIÓN DEL PANEL STREAMLIT CON DISEÑO ORIGINAL Y CONSISTENTE
+# 4. EJECUCIÓN DEL PANEL STREAMLIT
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -242,7 +237,7 @@ if os.path.exists(EXCEL_PATH):
         col_hora = buscar_columna(partidos_df, ["hora", "time"])
 
         if not col_local or not col_visita:
-            st.error(f"❌ No se pudieron identificar las columnas de equipos. Columnas detectadas: {list(partidos_df.columns)}")
+            st.error(f"❌ No se pudieron identificar las columnas de equipos.")
             st.stop()
 
         if col_jornada:
@@ -303,12 +298,11 @@ if os.path.exists(EXCEL_PATH):
 
         df_pronosticos = pd.DataFrame(resultados)
         
-        # Umbral actualizado a >= 60.0% para la llamita (🔥)
         max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
         df_pronosticos.insert(0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob])
 
         # ======================================================================
-        # ESTILOS VISUALES ORIGINALES Y CORREGIDOS
+        # ESTILOS VISUALES: Solo se resalta si es máximo Y supera o iguala el 60%
         # ======================================================================
         def resaltar_texto_porcentajes(row):
             styles = [""] * len(row)
@@ -317,11 +311,12 @@ if os.path.exists(EXCEL_PATH):
             p_local, p_empate, p_visita = row["% Local"], row["% Empate"], row["% Visita"]
             max_val = max(p_local, p_empate, p_visita)
 
-            if p_local == max_val and p_local != p_empate and p_local != p_visita:
+            # Condición estricta: Máximo absoluto y además >= 60.0%
+            if p_local == max_val and p_local >= 60.0:
                 styles[row.index.get_loc("% Local")] = estilo_texto_verde
-            elif p_empate == max_val and p_empate != p_local and p_empate != p_visita:
+            elif p_empate == max_val and p_empate >= 60.0:
                 styles[row.index.get_loc("% Empate")] = estilo_texto_verde
-            elif p_visita == max_val and p_visita != p_local and p_visita != p_empate:
+            elif p_visita == max_val and p_visita >= 60.0:
                 styles[row.index.get_loc("% Visita")] = estilo_texto_verde
 
             if row["Más de 2.5 goles"] >= 50.0:
