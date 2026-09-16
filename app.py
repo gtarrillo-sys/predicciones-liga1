@@ -19,7 +19,7 @@ if os.path.exists("logo.png"):
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
 # ==============================================================================
-# 2. FUNCIONES MATEMÁTICAS Y DIXON-COLES (CORREGIDAS)
+# 2. FUNCIONES MATEMÁTICAS Y DIXON-COLES
 # ==============================================================================
 def tau(x, y, lambda_, mu, rho):
     if x == 0 and y == 0:
@@ -46,19 +46,64 @@ def matriz_dixon_coles(lambda_, mu, rho=0.13, max_goles=6):
         matriz /= total
     return matriz
 
-def obtener_marcador_modal(matriz):
+def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_over25):
     """
-    Busca de manera estricta el resultado exacto (i - j) con la probabilidad 
-    individual más alta en toda la matriz de Dixon-Coles, evitando contradicciones.
+    Selecciona de manera estricta y coherente el marcador modal y la recomendación
+    alineados con las probabilidades de 1X2 y los goles esperados.
     """
+    # Determinar ganador lógico según probabilidades 1X2
+    if p_loc >= p_vis and p_loc >= p_emp:
+        ganador = "Local"
+        rec = f"Gana {loc}"
+    elif p_vis > p_loc and p_vis >= p_emp:
+        ganador = "Visita"
+        rec = f"Gana {vis}"
+    else:
+        ganador = "Empate"
+        rec = "Empate"
+
+    # Buscar el marcador más probable dentro del outcome ganador o empate coherente con over/under
     max_p = -1.0
     best_i, best_j = 1, 0
+
     for i in range(6):
         for j in range(6):
-            if matriz[i, j] > max_p:
-                max_p = matriz[i, j]
-                best_i, best_j = i, j
-    return f"{best_i} - {best_j}"
+            # Validar coherencia con ganador
+            es_valido = False
+            if ganador == "Local" and i > j:
+                es_valido = True
+            elif ganador == "Visita" and j > i:
+                es_valido = True
+            elif ganador == "Empate" and i == j:
+                es_valido = True
+
+            if es_valido:
+                # Si el marcador cumple con el over/under esperado
+                es_over = (i + j >= 3)
+                if (p_over25 >= 0.5 and es_over) or (p_over25 < 0.5 and not es_over):
+                    peso = matriz[i, j] * 1.5  # Bonificar si coincide con la tendencia de goles
+                else:
+                    peso = matriz[i, j]
+
+                if peso > max_p:
+                    max_p = peso
+                    best_i, best_j = i, j
+
+    # Fallback si por restricción estricta no encontró
+    if max_p == -1.0:
+        for i in range(6):
+            for j in range(6):
+                if ganador == "Local" and i > j and matriz[i, j] > max_p:
+                    max_p = matriz[i, j]
+                    best_i, best_j = i, j
+                elif ganador == "Visita" and j > i and matriz[i, j] > max_p:
+                    max_p = matriz[i, j]
+                    best_i, best_j = i, j
+                elif ganador == "Empate" and i == j and matriz[i, j] > max_p:
+                    max_p = matriz[i, j]
+                    best_i, best_j = i, j
+
+    return f"{best_i} - {best_j}", rec
 
 # ==============================================================================
 # 3. CARGA INTELIGENTE Y PROCESAMIENTO
@@ -177,7 +222,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
     return f_loc, f_vis
 
 # ==============================================================================
-# 4. EJECUCIÓN DEL PANEL STREAMLIT CON DISEÑO ORIGINAL
+# 4. EJECUCIÓN DEL PANEL STREAMLIT CON DISEÑO ORIGINAL Y CONSISTENTE
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -236,8 +281,7 @@ if os.path.exists(EXCEL_PATH):
             p_over25 = float(1.0 - sum(matriz[i, j] for i in range(6) for j in range(6) if i + j <= 2))
             p_btts = float(sum(matriz[i, j] for i in range(1, 6) for j in range(1, 6)))
 
-            marcador = obtener_marcador_modal(matriz)
-            rec = f"Gana {loc}" if p_loc > p_vis and p_loc > p_emp else (f"Gana {vis}" if p_vis > p_loc and p_vis > p_emp else "Empate")
+            marcador, rec = obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_over25)
 
             resultados.append({
                 "Fecha": str(fecha_p)[:10] if pd.notna(fecha_p) else "Por definir",
