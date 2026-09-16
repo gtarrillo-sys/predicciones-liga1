@@ -388,6 +388,7 @@ if archivo_excel:
                 }
             )
 
+# Reemplazo de las líneas 391 y 392:
     df_pronosticos = pd.DataFrame(resultados)
     
     # 1. Agregar columna 🔥 a partidos calientes (>= 50%)
@@ -432,6 +433,7 @@ if archivo_excel:
 
     st.subheader("📋 Resumen de pronósticos")
     st.dataframe(estilo_tabla, use_container_width=True, hide_index=True)
+    
     except Exception as e:
         st.error(f"Error al procesar el modelo: {str(e)}")
 else:
