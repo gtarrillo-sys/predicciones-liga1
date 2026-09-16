@@ -5,7 +5,7 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO DE CUADRÍCULA CSS
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO CSS CORPORATIVO (VERDE QUIPUS)
 # ==============================================================================
 st.set_page_config(
     page_title="Predicción Liga 1 Perú - Quipus Data",
@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# Estilo CSS para forzar la cuadrícula completa en las tablas
+# Estilo CSS para aplicar el verde corporativo exacto de Quipus Data en los encabezados
 st.markdown(
     """
     <style>
@@ -23,7 +23,7 @@ st.markdown(
         text-align: center !important;
     }
     th {
-        background-color: #9ca592 !important;
+        background-color: #7b8870 !important; /* Verde corporativo Quipus Data */
         color: white !important;
         font-weight: bold;
     }
@@ -295,7 +295,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
 
 
 # ==============================================================================
-# 4. RENDERIZADO DE TABLA CON CUADRÍCULA COMPLETA
+# 4. RENDERIZADO DE TABLA Y REGLAS DE RESALTADO (≥ 70% EN RECOMENDACIÓN)
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -412,7 +412,7 @@ if os.path.exists(EXCEL_PATH):
 
     def resaltar_texto_porcentajes(row):
       styles = [""] * len(row)
-      estilo_texto_verde = "color: #1e7e34; font-weight: bold;"
+      estilo_texto_verde = "color: #2e6930; font-weight: bold;"
 
       p_local, p_empate, p_visita = (
           row["% Local"],
@@ -421,6 +421,7 @@ if os.path.exists(EXCEL_PATH):
       )
       max_val = max(p_local, p_empate, p_visita)
 
+      # Resaltar porcentajes altos
       if p_local == max_val and p_local >= 60.0:
         styles[row.index.get_loc("% Local")] = estilo_texto_verde
       elif p_empate == max_val and p_empate >= 60.0:
@@ -433,6 +434,10 @@ if os.path.exists(EXCEL_PATH):
 
       if row["Ambos marcan: Sí"] >= 50.0:
         styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_texto_verde
+
+      # Si el porcentaje dominante es de 70% o más, resaltar la columna Recomendación en verde y negrita
+      if max_val >= 70.0:
+        styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
 
       return styles
 
