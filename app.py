@@ -89,13 +89,11 @@ def cargar_excel(filepath):
     hoja_partidos = "partidos" if "partidos" in hojas else hojas[0]
     df_partidos = pd.read_excel(filepath, sheet_name=hoja_partidos)
     
-    # Limpiar espacios en blanco manteniendo nombres originales
-    df_partidos.columns = df_partidos.columns.astype(str).str.strip()
+    # Estandarización total: limpia espacios y convierte TODO a minúsculas
+    df_partidos.columns = df_partidos.columns.astype(str).str.strip().str.lower()
     
-    # Estandarizar fecha
-    for col in df_partidos.columns:
-        if col.lower() == "fecha":
-            df_partidos[col] = pd.to_datetime(df_partidos[col], errors="coerce")
+    if "fecha" in df_partidos.columns:
+        df_partidos["fecha"] = pd.to_datetime(df_partidos["fecha"], errors="coerce")
 
     return {"partidos": df_partidos}
 
@@ -104,8 +102,11 @@ def calcular_tasas_equipo(datos, equipo, antes_de=None):
     if antes_de is not None and "fecha" in df.columns:
         df = df[df["fecha"] < antes_de]
 
-    # Filtrar jugados con goles válidos
-    jugados = df[df["gl"].notna() & df["gv"].notna()]
+    # Filtrar partidos jugados con goles válidos
+    if "gl" in df.columns and "gv" in df.columns:
+        jugados = df[df["gl"].notna() & df["gv"].notna()]
+    else:
+        return 1.3, 1.2
 
     locales = jugados[jugados["local"] == equipo]
     visitas = jugados[jugados["visita"] == equipo]
@@ -125,7 +126,7 @@ def obtener_factores_contextual(datos, local, visita):
 def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objetivo_vis):
     """
     Ajuste de intensidades considerando:
-    1. Hora + Clima + Cruce de Plazas
+    1. Hora + Clima + Cruce de Plazas (Sullana / Altura)
     2. Jerarquía Ofensiva de los Grandes
     3. Tensión por Objetivos de Cierre del Clausura
     """
@@ -173,7 +174,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objet
     if visita in grandes_jerarquia:
         f_vis *= 1.10
 
-    # C. TENSIÓN Y PRESION POR OBJETIVOS DEL CLAUSURA
+    # C. TENSIÓN Y PRESIÓN POR OBJETIVOS DEL CLAUSURA
     obj_loc = str(objetivo_loc).lower() if pd.notna(objetivo_loc) else ""
     obj_vis = str(objetivo_vis).lower() if pd.notna(objetivo_vis) else ""
 
@@ -202,32 +203,22 @@ if os.path.exists(EXCEL_PATH):
         datos = cargar_excel(EXCEL_PATH)
         partidos_df = datos["partidos"]
 
-        # Selector de Jornada flexible (mayúsculas o minúsculas)
-        col_jornada = next((c for c in partidos_df.columns if c.lower() == "jornada"), None)
-
-        if col_jornada:
-            jornadas = sorted(partidos_df[col_jornada].dropna().unique())
+        # Selector de Jornada en la barra lateral
+        if "jornada" in partidos_df.columns:
+            jornadas = sorted(partidos_df["jornada"].dropna().unique())
             st.sidebar.header("⚽ Selección de Jornada")
             jornada_sel = st.sidebar.selectbox("Seleccionar Jornada", jornadas)
-            partidos_fecha = partidos_df[partidos_df[col_jornada] == jornada_sel].copy()
+            partidos_fecha = partidos_df[partidos_df["jornada"] == jornada_sel].copy()
         else:
             partidos_fecha = partidos_df.copy()
 
-        # Detección flexible de nombres de columnas
-        col_local = next((c for c in partidos_fecha.columns if c.lower() == "local"), "Local")
-        col_visita = next((c for c in partidos_fecha.columns if c.lower() == "visita"), "Visita")
-        col_fecha = next((c for c in partidos_fecha.columns if c.lower() == "fecha"), "Fecha")
-        col_hora = next((c for c in partidos_fecha.columns if c.lower() == "hora"), "Hora")
-        col_obj_loc = next((c for c in partidos_fecha.columns if "objetivo" in c.lower() and "local" in c.lower()), None)
-        col_obj_vis = next((c for c in partidos_fecha.columns if "objetivo" in c.lower() and "visita" in c.lower()), None)
-
         resultados = []
         for _, row in partidos_fecha.iterrows():
-            loc, vis = str(row[col_local]), str(row[col_visita])
-            fecha_p = row.get(col_fecha, None)
+            loc, vis = str(row["local"]), str(row["visita"])
+            fecha_p = row.get("fecha", None)
 
             # Formato de Hora
-            hora_raw = row.get(col_hora, None)
+            hora_raw = row.get("hora", None)
             if pd.notna(hora_raw) and hora_raw is not None:
                 if hasattr(hora_raw, 'strftime'):
                     hora_str = hora_raw.strftime("%H:%M")
@@ -237,8 +228,8 @@ if os.path.exists(EXCEL_PATH):
                 hora_str = "--:--"
 
             # Objetivos del Clausura si existen en el Excel
-            obj_loc = row.get(col_obj_loc, "normal") if col_obj_loc else "normal"
-            obj_vis = row.get(col_obj_vis, "normal") if col_obj_vis else "normal"
+            obj_loc = row.get("objetivo_local", "normal")
+            obj_vis = row.get("objetivo_visita", "normal")
 
             # Cálculo de tasas de gol
             gf_loc, ga_loc = calcular_tasas_equipo(datos, loc, antes_de=fecha_p)
@@ -275,7 +266,7 @@ if os.path.exists(EXCEL_PATH):
             resultados.append(
                 {
                     "Fecha": (
-                        fecha_p.strftime("%Y-%m-%d") if pd.notna(fecha_p) else "Por definir"
+                        fecha_p.strftime("%Y-%m-%d") if pd.notna(fecha_p) and hasattr(fecha_p, 'strftime') else "Por definir"
                     ),
                     "Hora": hora_str,
                     "Local": loc,
@@ -300,7 +291,6 @@ if os.path.exists(EXCEL_PATH):
         # 2. Función para resaltar el TEXTO de los porcentajes en verde
         def resaltar_texto_porcentajes(row):
             styles = [""] * len(row)
-            # Estilo verde fuerte para el texto sin pintar el fondo de la celda
             estilo_texto_verde = "color: #1e7e34; font-weight: bold;"
 
             p_local, p_empate, p_visita = row["% Local"], row["% Empate"], row["% Visita"]
