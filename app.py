@@ -13,8 +13,17 @@ st.set_page_config(
     layout="wide"
 )
 
-if os.path.exists("logo.png"):
-    st.image("logo.png", width=260)
+# Búsqueda flexible del logo de Quipus
+logo_encontrado = None
+for posible_nombre in ["logo.png", "logo_quipus.png", "quipus_logo.png", "logo-quipus.png"]:
+    if os.path.exists(posible_nombre):
+        logo_encontrado = posible_nombre
+        break
+
+if logo_encontrado:
+    st.image(logo_encontrado, width=260)
+else:
+    st.markdown("### 📊 Quipus Data")
 
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
@@ -51,7 +60,6 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
     Selecciona de manera estricta y coherente el marcador modal y la recomendación
     alineados con las probabilidades de 1X2 y los goles esperados.
     """
-    # Determinar ganador lógico según probabilidades 1X2
     if p_loc >= p_vis and p_loc >= p_emp:
         ganador = "Local"
         rec = f"Gana {loc}"
@@ -62,13 +70,11 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
         ganador = "Empate"
         rec = "Empate"
 
-    # Buscar el marcador más probable dentro del outcome ganador o empate coherente con over/under
     max_p = -1.0
     best_i, best_j = 1, 0
 
     for i in range(6):
         for j in range(6):
-            # Validar coherencia con ganador
             es_valido = False
             if ganador == "Local" and i > j:
                 es_valido = True
@@ -78,10 +84,9 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
                 es_valido = True
 
             if es_valido:
-                # Si el marcador cumple con el over/under esperado
                 es_over = (i + j >= 3)
                 if (p_over25 >= 0.5 and es_over) or (p_over25 < 0.5 and not es_over):
-                    peso = matriz[i, j] * 1.5  # Bonificar si coincide con la tendencia de goles
+                    peso = matriz[i, j] * 1.5
                 else:
                     peso = matriz[i, j]
 
@@ -89,7 +94,6 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
                     max_p = peso
                     best_i, best_j = i, j
 
-    # Fallback si por restricción estricta no encontró
     if max_p == -1.0:
         for i in range(6):
             for j in range(6):
@@ -298,11 +302,13 @@ if os.path.exists(EXCEL_PATH):
             })
 
         df_pronosticos = pd.DataFrame(resultados)
+        
+        # Umbral actualizado a >= 60.0% para la llamita (🔥)
         max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
-        df_pronosticos.insert(0, "🔥", ["🔥" if p >= 50.0 else "➖" for p in max_prob])
+        df_pronosticos.insert(0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob])
 
         # ======================================================================
-        # ESTILOS VISUALES ORIGINALES
+        # ESTILOS VISUALES ORIGINALES Y CORREGIDOS
         # ======================================================================
         def resaltar_texto_porcentajes(row):
             styles = [""] * len(row)
@@ -311,11 +317,11 @@ if os.path.exists(EXCEL_PATH):
             p_local, p_empate, p_visita = row["% Local"], row["% Empate"], row["% Visita"]
             max_val = max(p_local, p_empate, p_visita)
 
-            if p_local == max_val:
+            if p_local == max_val and p_local != p_empate and p_local != p_visita:
                 styles[row.index.get_loc("% Local")] = estilo_texto_verde
-            elif p_empate == max_val:
+            elif p_empate == max_val and p_empate != p_local and p_empate != p_visita:
                 styles[row.index.get_loc("% Empate")] = estilo_texto_verde
-            elif p_visita == max_val:
+            elif p_visita == max_val and p_visita != p_local and p_visita != p_empate:
                 styles[row.index.get_loc("% Visita")] = estilo_texto_verde
 
             if row["Más de 2.5 goles"] >= 50.0:
