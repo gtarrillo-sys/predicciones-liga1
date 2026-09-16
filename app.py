@@ -492,13 +492,12 @@ if os.path.exists(EXCEL_PATH):
       return styles
 
 
-    def resaltar_texto_resumen(row):
-      styles = [""] * len(row)
-      estilo_texto_verde = "color: #2e6930; font-weight: bold;"
-      if "Gana" in str(row["Recomendacion"]):
-        styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
-      return styles
-
+def resaltar_texto_resumen(row):
+  styles = [""] * len(row)
+  estilo_texto_verde = "color: #2e6930; font-weight: bold;"
+  if row["🔥"] == "🔥":
+    styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
+  return styles
 
     estilo_tabla_completa = df_pronosticos.style.apply(
         resaltar_texto_porcentajes, axis=1
