@@ -559,41 +559,76 @@ def calcular_forma(hist, equipo, antes_de=None, ventana=5):
 # 11. TASAS DE ATAQUE / DEFENSA PREPARTIDO
 # =========================================================
 
-def calcular_tasas_equipo(hist, equipo, antes_de=None, ventana=8):
-    h = hist.copy()
+def calcular_tasas_equipo(datos, equipo, antes_de=None, ventana_clausura=5):
+    eq = normalizar_nombre(equipo)
 
-    if antes_de is not None and pd.notna(antes_de):
-        h = h[h["fecha"].isna() | (h["fecha"] < antes_de)]
+    # Si 'datos' es un DataFrame (hist), extraemos del histórico o de los diccionarios
+    if isinstance(datos, pd.DataFrame):
+        ap = datos[datos["fase"] == "Apertura"].copy() if "fase" in datos.columns else datos.copy()
+        cl = datos[datos["fase"] == "Clausura"].copy() if "fase" in datos.columns else datos.copy()
+    else:
+        ap = datos.get("apertura", pd.DataFrame()).copy()
+        cl = datos.get("clausura", pd.DataFrame()).copy()
 
-    h = h[
-        (h["local_std"] == equipo) |
-        (h["visita_std"] == equipo)
-    ].copy()
+    # 1. TORNEO APERTURA (Mezcla 60% Goles Reales + 40% xG Flashscore)
+    ap_eq = ap[(ap["local_std"] == eq) | (ap["visita_std"] == eq)].copy()
 
-    if h.empty:
-        return PRIOR_GF, PRIOR_GA, 0
+    if not ap_eq.empty:
+        gf_ap_list, ga_ap_list = [], []
+        for _, r in ap_eq.iterrows():
+            es_local = (r["local_std"] == eq)
+            gl = float(r["gl"])
+            gv = float(r["gv"])
+            
+            # Extraer xG de Flashscore si existe, si no usar gol real
+            xg_l = float(r.get("xg_local_clean", gl)) if pd.notna(r.get("xg_local_clean")) else gl
+            xg_v = float(r.get("xg_visita_clean", gv)) if pd.notna(r.get("xg_visita_clean")) else gv
 
-    if h["fecha"].notna().any():
-        h["_fecha"] = h["fecha"].fillna(pd.Timestamp("1900-01-01"))
-        h = h.sort_values("_fecha")
+            if es_local:
+                gf_mix = 0.60 * gl + 0.40 * xg_l
+                ga_mix = 0.60 * gv + 0.40 * xg_v
+            else:
+                gf_mix = 0.60 * gv + 0.40 * xg_v
+                ga_mix = 0.60 * gl + 0.40 * xg_l
 
-    h = h.tail(ventana)
+            gf_ap_list.append(gf_mix)
+            ga_ap_list.append(ga_mix)
 
-    gf = []
-    ga = []
-    for _, r in h.iterrows():
-        if r["local_std"] == equipo:
-            gf.append(float(r["gl"]))
-            ga.append(float(r["gv"]))
-        else:
-            gf.append(float(r["gv"]))
-            ga.append(float(r["gl"]))
+        media_gf_ap = float(np.mean(gf_ap_list))
+        media_ga_ap = float(np.mean(ga_ap_list))
+    else:
+        media_gf_ap, media_ga_ap = PRIOR_GF, PRIOR_GA
 
-    n = len(gf)
-    media_gf = (sum(gf) + PRIOR_GF * PRIOR_PESO) / (n + PRIOR_PESO)
-    media_ga = (sum(ga) + PRIOR_GA * PRIOR_PESO) / (n + PRIOR_PESO)
+    # 2. TORNEO CLAUSURA (100% Goles Reales en racha reciente)
+    if antes_de is not None and pd.notna(antes_de) and "fecha" in cl.columns:
+        cl = cl[cl["fecha"].isna() | (cl["fecha"] < antes_de)]
 
-    return media_gf, media_ga, n
+    cl_eq = cl[(cl["local_std"] == eq) | (cl["visita_std"] == eq)].copy()
+
+    if not cl_eq.empty:
+        if "fecha" in cl_eq.columns and cl_eq["fecha"].notna().any():
+            cl_eq = cl_eq.sort_values("fecha")
+        cl_eq = cl_eq.tail(ventana_clausura)
+
+        gf_cl_list, ga_cl_list = [], []
+        for _, r in cl_eq.iterrows():
+            if r["local_std"] == eq:
+                gf_cl_list.append(float(r["gl"]))
+                ga_cl_list.append(float(r["gv"]))
+            else:
+                gf_cl_list.append(float(r["gv"]))
+                ga_cl_list.append(float(r["gl"]))
+
+        media_gf_cl = float(np.mean(gf_cl_list))
+        media_ga_cl = float(np.mean(ga_cl_list))
+    else:
+        media_gf_cl, media_ga_cl = media_gf_ap, media_ga_ap
+
+    # 3. PONDERACIÓN DUAL COMPLETA (35% Apertura + 65% Clausura)
+    gf_final = 0.35 * media_gf_ap + 0.65 * media_gf_cl
+    ga_final = 0.35 * media_ga_ap + 0.65 * media_ga_cl
+
+    return gf_final, ga_final, len(cl_eq)
 
 
 # =========================================================
