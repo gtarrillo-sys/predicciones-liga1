@@ -13,7 +13,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Renderizar Logo y Título Corporativo
 if os.path.exists("logo.png"):
     st.image("logo.png", width=260)
 
@@ -58,7 +57,7 @@ def obtener_marcador_modal(matriz, p_loc, p_emp, p_vis):
                     best_i, best_j = i, j
         return f"{best_i} - {best_j}"
 
-    elif p_vis > p_loc and p_vis > p_emp:
+    elif p_vis > p_loc and p_emp:
         max_p = -1.0
         best_i, best_j = 0, 1
         for i in range(6):
@@ -84,35 +83,38 @@ def obtener_marcador_modal(matriz, p_loc, p_emp, p_vis):
 def cargar_excel(filepath):
     xls = pd.ExcelFile(filepath)
     hojas = xls.sheet_names
-    
-    # Cargar pestaña de partidos o primera pestaña
     hoja_partidos = "partidos" if "partidos" in hojas else hojas[0]
     df_partidos = pd.read_excel(filepath, sheet_name=hoja_partidos)
-    
-    # Estandarización total: limpia espacios y convierte TODO a minúsculas
-    df_partidos.columns = df_partidos.columns.astype(str).str.strip().str.lower()
-    
-    if "fecha" in df_partidos.columns:
-        df_partidos["fecha"] = pd.to_datetime(df_partidos["fecha"], errors="coerce")
-
+    df_partidos.columns = df_partidos.columns.astype(str).str.strip()
     return {"partidos": df_partidos}
 
-def calcular_tasas_equipo(datos, equipo, antes_de=None):
-    df = datos["partidos"].copy()
-    if antes_de is not None and "fecha" in df.columns:
-        df = df[df["fecha"] < antes_de]
+def buscar_columna(df, palabras_clave):
+    """Busca una columna que contenga alguna de las palabras clave"""
+    for col in df.columns:
+        col_clean = str(col).lower().strip()
+        for clave in palabras_clave:
+            if clave in col_clean:
+                return col
+    return None
 
-    # Filtrar partidos jugados con goles válidos
-    if "gl" in df.columns and "gv" in df.columns:
-        jugados = df[df["gl"].notna() & df["gv"].notna()]
+def calcular_tasas_equipo(datos, equipo, col_local, col_visita, col_gl, col_gv, col_fecha, antes_de=None):
+    df = datos["partidos"].copy()
+    if antes_de is not None and col_fecha and col_fecha in df.columns:
+        df = df[df[col_fecha] < antes_de]
+
+    if col_gl and col_gv and col_gl in df.columns and col_gv in df.columns:
+        jugados = df[df[col_gl].notna() & df[col_gv].notna()]
     else:
         return 1.3, 1.2
 
-    locales = jugados[jugados["local"] == equipo]
-    visitas = jugados[jugados["visita"] == equipo]
+    if col_local in jugados.columns and col_visita in jugados.columns:
+        locales = jugados[jugados[col_local] == equipo]
+        visitas = jugados[jugados[col_visita] == equipo]
+    else:
+        return 1.3, 1.2
 
-    goles_favor = locales["gl"].sum() + visitas["gv"].sum()
-    goles_contra = locales["gv"].sum() + visitas["gl"].sum()
+    goles_favor = locales[col_gl].sum() + visitas[col_gv].sum()
+    goles_contra = locales[col_gv].sum() + visitas[col_gl].sum()
     total_partidos = len(locales) + len(visitas)
 
     if total_partidos == 0:
@@ -124,19 +126,12 @@ def obtener_factores_contextual(datos, local, visita):
     return 1.15, 0.88, 0.13
 
 def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objetivo_vis):
-    """
-    Ajuste de intensidades considerando:
-    1. Hora + Clima + Cruce de Plazas (Sullana / Altura)
-    2. Jerarquía Ofensiva de los Grandes
-    3. Tensión por Objetivos de Cierre del Clausura
-    """
     plazas_calor = ["Alianza Atlético", "Atlético Grau", "Comerciantes Unidos", "Union Comercio"]
     plazas_altura = ["Cienciano", "Cusco FC", "Deportivo Garcilaso", "Sport Huancayo", "FC Cajamarca", "ADT", "Melgar"]
     grandes_jerarquia = ["Universitario", "Sporting Cristal", "Alianza Lima"]
 
     f_loc, f_vis = 1.0, 1.0
 
-    # Determinar hora entera
     hora_num = 15
     if pd.notna(hora) and hora is not None:
         try:
@@ -147,7 +142,6 @@ def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objet
         except Exception:
             hora_num = 15
 
-    # A. CLIMA / HORARIO / CRUCE DE ORIGEN
     visita_es_altura = visita in plazas_altura
     visita_es_calor = visita in plazas_calor
 
@@ -170,11 +164,9 @@ def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objet
             f_loc *= 1.04
             f_vis *= 0.92
 
-    # B. JERARQUÍA OFENSIVA DE LOS GRANDES COMO VISITANTE
     if visita in grandes_jerarquia:
         f_vis *= 1.10
 
-    # C. TENSIÓN Y PRESIÓN POR OBJETIVOS DEL CLAUSURA
     obj_loc = str(objetivo_loc).lower() if pd.notna(objetivo_loc) else ""
     obj_vis = str(objetivo_vis).lower() if pd.notna(objetivo_vis) else ""
 
@@ -196,29 +188,49 @@ def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objet
 # ==============================================================================
 # 4. EJECUCIÓN DEL PANEL STREAMLIT (CARGA AUTOMÁTICA DESDE GITHUB)
 # ==============================================================================
-EXCEL_PATH = "Liga1_2026.xlsx"  # Archivo en la raíz del repositorio
+EXCEL_PATH = "Liga1_2026.xlsx"
 
 if os.path.exists(EXCEL_PATH):
     try:
         datos = cargar_excel(EXCEL_PATH)
         partidos_df = datos["partidos"]
 
-        # Selector de Jornada en la barra lateral
-        if "jornada" in partidos_df.columns:
-            jornadas = sorted(partidos_df["jornada"].dropna().unique())
+        # Detección ultra-flexible de columnas
+        col_local = buscar_columna(partidos_df, ["local", "equipo_local", "equipo local", "loc"])
+        col_visita = buscar_columna(partidos_df, ["visita", "visitante", "equipo_visita", "equipo visita", "vis"])
+        col_jornada = buscar_columna(partidos_df, ["jornada", "fecha_liga", "fecha liga", "fechadela_liga"])
+        col_fecha = buscar_columna(partidos_df, ["fecha", "date"])
+        col_hora = buscar_columna(partidos_df, ["hora", "time"])
+        col_gl = buscar_columna(partidos_df, ["gl", "goles_local", "goles local"])
+        col_gv = buscar_columna(partidos_df, ["gv", "goles_visita", "goles visita"])
+        col_obj_loc = buscar_columna(partidos_df, ["objetivo_local", "obj_local", "objetivo local"])
+        col_obj_vis = buscar_columna(partidos_df, ["objetivo_visita", "obj_visita", "objetivo visita"])
+
+        # Validación de seguridad
+        if not col_local or not col_visita:
+            st.error(f"❌ No se pudieron identificar las columnas de los equipos. Nombres detectados en tu Excel: {list(partidos_df.columns)}")
+            st.stop()
+
+        # Normalizar fechas si existen
+        if col_fecha:
+            partidos_df[col_fecha] = pd.to_datetime(partidos_df[col_fecha], errors="coerce")
+
+        # Selector de Jornada
+        if col_jornada:
+            jornadas = sorted(partidos_df[col_jornada].dropna().unique())
             st.sidebar.header("⚽ Selección de Jornada")
             jornada_sel = st.sidebar.selectbox("Seleccionar Jornada", jornadas)
-            partidos_fecha = partidos_df[partidos_df["jornada"] == jornada_sel].copy()
+            partidos_fecha = partidos_df[partidos_df[col_jornada] == jornada_sel].copy()
         else:
             partidos_fecha = partidos_df.copy()
 
         resultados = []
         for _, row in partidos_fecha.iterrows():
-            loc, vis = str(row["local"]), str(row["visita"])
-            fecha_p = row.get("fecha", None)
+            loc, vis = str(row[col_local]), str(row[col_visita])
+            fecha_p = row[col_fecha] if col_fecha and col_fecha in row else None
 
-            # Formato de Hora
-            hora_raw = row.get("hora", None)
+            # Hora
+            hora_raw = row[col_hora] if col_hora and col_hora in row else None
             if pd.notna(hora_raw) and hora_raw is not None:
                 if hasattr(hora_raw, 'strftime'):
                     hora_str = hora_raw.strftime("%H:%M")
@@ -227,19 +239,18 @@ if os.path.exists(EXCEL_PATH):
             else:
                 hora_str = "--:--"
 
-            # Objetivos del Clausura si existen en el Excel
-            obj_loc = row.get("objetivo_local", "normal")
-            obj_vis = row.get("objetivo_visita", "normal")
+            # Objetivos
+            obj_loc = row[col_obj_loc] if col_obj_loc and col_obj_loc in row else "normal"
+            obj_vis = row[col_obj_vis] if col_obj_vis and col_obj_vis in row else "normal"
 
-            # Cálculo de tasas de gol
-            gf_loc, ga_loc = calcular_tasas_equipo(datos, loc, antes_de=fecha_p)
-            gf_vis, ga_vis = calcular_tasas_equipo(datos, vis, antes_de=fecha_p)
+            # Tasas de gol
+            gf_loc, ga_loc = calcular_tasas_equipo(datos, loc, col_local, col_visita, col_gl, col_gv, col_fecha, antes_de=fecha_p)
+            gf_vis, ga_vis = calcular_tasas_equipo(datos, vis, col_local, col_visita, col_gl, col_gv, col_fecha, antes_de=fecha_p)
 
-            # Factores contextuales y situacionales
+            # Factores
             f_loc, f_vis, rho_dc = obtener_factores_contextual(datos, loc, vis)
             f_sit_loc, f_sit_vis = obtener_ajuste_situacional_completo(loc, vis, hora_raw, obj_loc, obj_vis)
 
-            # Intensidades ajustadas
             l_loc = max(0.4, ((gf_loc + ga_vis) / 2.0) * f_loc * f_sit_loc)
             m_vis = max(0.3, ((gf_vis + ga_loc) / 2.0) * f_vis * f_sit_vis)
 
@@ -281,14 +292,13 @@ if os.path.exists(EXCEL_PATH):
                 }
             )
 
-        # Convertir a DataFrame
         df_pronosticos = pd.DataFrame(resultados)
 
-        # 1. Agregar columna 🔥 a partidos calientes (>= 50%)
+        # 1. Agregar 🔥
         max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
         df_pronosticos.insert(0, "🔥", ["🔥" if p >= 50.0 else "➖" for p in max_prob])
 
-        # 2. Función para resaltar el TEXTO de los porcentajes en verde
+        # 2. Resaltar texto verde
         def resaltar_texto_porcentajes(row):
             styles = [""] * len(row)
             estilo_texto_verde = "color: #1e7e34; font-weight: bold;"
@@ -311,7 +321,7 @@ if os.path.exists(EXCEL_PATH):
 
             return styles
 
-        # 3. Estilizado visual corporativo Quipus Data
+        # 3. Estilo Quipus Data
         estilo_tabla = (
             df_pronosticos.style.apply(resaltar_texto_porcentajes, axis=1)
             .format("{:.1f}", subset=["% Local", "% Empate", "% Visita", "Más de 2.5 goles", "Ambos marcan: Sí"])
@@ -342,7 +352,6 @@ if os.path.exists(EXCEL_PATH):
             )
         )
 
-        # 4. Renderizado en pantalla
         st.subheader("📋 Resumen de pronósticos")
         st.dataframe(estilo_tabla, use_container_width=True, hide_index=True)
 
