@@ -950,37 +950,32 @@ def fuerza_partido(
 
 def obtener_marcador_modal_ajustado(m, recomendacion, local, visita):
     """
-    Selecciona el marcador más probable de la matriz Dixon-Coles
-    forzando coherencia lógica con la tendencia de la recomendación.
+    Genera un marcador modal realista utilizando los parámetros de
+    esperanza de goles de la matriz de Dixon-Coles y la probabilidad de Over.
     """
-    max_p = -1.0
-    best_score = "1 - 1"
-    
-    rec_upper = recomendacion.upper()
-    loc_upper = local.upper()
-    vis_upper = visita.upper()
+    # 1. Calcular la esperanza matemática de goles para cada equipo
+    goles_esperados_local = np.sum(np.arange(m.shape[0])[:, None] * m)
+    goles_esperados_visita = np.sum(np.arange(m.shape[1])[None, :] * m)
 
-    for gl in range(m.shape[0]):
-        for gv in range(m.shape[1]):
-            p = m[gl, gv]
-            
-            # Definir la restricción según la tendencia del pronóstico
-            if ("GANA" in rec_upper and loc_upper in rec_upper) or "1" in rec_upper:
-                condicion = (gl > gv)
-            elif ("GANA" in rec_upper and vis_upper in rec_upper) or "2" in rec_upper:
-                condicion = (gv > gl)
-            elif "1X" in rec_upper:
-                condicion = (gl >= gv)
-            elif "X2" in rec_upper:
-                condicion = (gv >= gl)
-            else:
-                condicion = True
-                
-            if condicion and p > max_p:
-                max_p = p
-                best_score = f"{gl} - {gv}"
-                
-    return best_score
+    # 2. Redondeo inicial
+    gl = int(np.round(goles_esperados_local))
+    gv = int(np.round(goles_esperados_visita))
+
+    # 3. Calcular probabilidad de Over 2.5 en la matriz
+    prob_over = float(1.0 - sum(m[i, j] for i in range(m.shape[0]) for j in range(m.shape[1]) if i + j <= 2))
+
+    # 4. Ajuste dinámico si la probabilidad de Over es alta (> 50%) y el redondeo da menos de 3 goles
+    if prob_over > 0.50 and (gl + gv) < 3:
+        if goles_esperados_local >= goles_esperados_visita:
+            gl = max(gl, 2)
+            if gv == 0 and goles_esperados_visita > 0.8:
+                gv = 1
+        else:
+            gv = max(gv, 2)
+            if gl == 0 and goles_esperados_local > 0.8:
+                gl = 1
+
+    return f"{gl} - {gv}"
 
 def calcular_probabilidades(
     local,
