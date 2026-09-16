@@ -388,51 +388,52 @@ if archivo_excel:
                 }
             )
 
-# Reemplazo de las líneas 391 y 392:
-    df_pronosticos = pd.DataFrame(resultados)
-    
-    # 1. Agregar columna 🔥 a partidos calientes (>= 50%)
-    max_prob = df_pronosticos[['% Local', '% Empate', '% Visita']].max(axis=1)
-    df_pronosticos.insert(0, '🔥', ['🔥' if p >= 50.0 else '➖' for p in max_prob])
-
-    # 2. Función para pintar de verde pastel la celda ganadora
-    def resaltar_max_probabilidad(row):
-        styles = [''] * len(row)
-        p_local, p_empate, p_visita = row['% Local'], row['% Empate'], row['% Visita']
-        max_val = max(p_local, p_empate, p_visita)
-        estilo_verde = 'background-color: #d4edda; color: #155724; font-weight: bold;'
+# Convertir resultados a DataFrame
+        df_pronosticos = pd.DataFrame(resultados)
         
-        if p_local == max_val:
-            styles[row.index.get_loc('% Local')] = estilo_verde
-        elif p_empate == max_val:
-            styles[row.index.get_loc('% Empate')] = estilo_verde
-        elif p_visita == max_val:
-            styles[row.index.get_loc('% Visita')] = estilo_verde
-        return styles
+        # 1. Agregar columna 🔥 a partidos calientes (>= 50%)
+        max_prob = df_pronosticos[['% Local', '% Empate', '% Visita']].max(axis=1)
+        df_pronosticos.insert(0, '🔥', ['🔥' if p >= 50.0 else '➖' for p in max_prob])
 
-    # 3. Aplicar estilos estilo Quipus Data
-    estilo_tabla = df_pronosticos.style\
-        .apply(resaltar_max_probabilidad, axis=1)\
-        .set_properties(**{
-            'border-color': '#e0e2dc',
-            'font-family': 'sans-serif',
-            'text-align': 'center'
-        })\
-        .set_table_styles([
-            {'selector': 'th', 'props': [
-                ('background-color', '#9ca592'),
-                ('color', '#ffffff'),
-                ('font-weight', 'bold'),
-                ('text-align', 'center'),
-                ('padding', '8px')
-            ]},
-            {'selector': 'tbody tr:hover', 'props': [
-                ('background-color', '#f4f5f2 !important')
-            ]}
-        ])
+        # 2. Función para resaltar en verde la celda con mayor probabilidad
+        def resaltar_max_probabilidad(row):
+            styles = [''] * len(row)
+            p_local, p_empate, p_visita = row['% Local'], row['% Empate'], row['% Visita']
+            max_val = max(p_local, p_empate, p_visita)
+            estilo_verde = 'background-color: #d4edda; color: #155724; font-weight: bold;'
+            
+            if p_local == max_val:
+                styles[row.index.get_loc('% Local')] = estilo_verde
+            elif p_empate == max_val:
+                styles[row.index.get_loc('% Empate')] = estilo_verde
+            elif p_visita == max_val:
+                styles[row.index.get_loc('% Visita')] = estilo_verde
+            return styles
 
-    st.subheader("📋 Resumen de pronósticos")
-    st.dataframe(estilo_tabla, use_container_width=True, hide_index=True)
+        # 3. Estilizado visual corporativo Quipus Data
+        estilo_tabla = df_pronosticos.style\
+            .apply(resaltar_max_probabilidad, axis=1)\
+            .set_properties(**{
+                'border-color': '#e0e2dc',
+                'font-family': 'sans-serif',
+                'text-align': 'center'
+            })\
+            .set_table_styles([
+                {'selector': 'th', 'props': [
+                    ('background-color', '#9ca592'),
+                    ('color', '#ffffff'),
+                    ('font-weight', 'bold'),
+                    ('text-align', 'center'),
+                    ('padding', '8px')
+                ]},
+                {'selector': 'tbody tr:hover', 'props': [
+                    ('background-color', '#f4f5f2 !important')
+                ]}
+            ])
+
+        # 4. Renderizado en pantalla (ocultando el índice)
+        st.subheader("📋 Resumen de pronósticos")
+        st.dataframe(estilo_tabla, use_container_width=True, hide_index=True)
     
     except Exception as e:
         st.error(f"Error al procesar el modelo: {str(e)}")
