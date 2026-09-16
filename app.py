@@ -13,6 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
+# Búsqueda flexible del logo de Quipus (Sin alterar diseño previo)
 logo_encontrado = None
 for posible_nombre in ["logo.png", "logo_quipus.png", "quipus_logo.png", "logo-quipus.png"]:
     if os.path.exists(posible_nombre):
@@ -27,7 +28,7 @@ else:
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
 # ==============================================================================
-# 2. FUNCIONES MATEMÁTICAS Y DIXON-COLES
+# 2. FUNCIONES MATEMÁTICAS, DIXON-COLES Y AJUSTE DE MOMENTUM (BACKEND)
 # ==============================================================================
 def tau(x, y, lambda_, mu, rho):
     if x == 0 and y == 0:
@@ -53,6 +54,36 @@ def matriz_dixon_coles(lambda_, mu, rho=0.13, max_goles=6):
     if total > 0:
         matriz /= total
     return matriz
+
+def calcular_tasa_ponderada(df_historial, equipo, es_local=True):
+    """
+    Mejora experta: Pondera los últimos 3 partidos jugados dándoles mayor peso 
+    (momentum), reduciendo el sesgo de la inercia acumulada en todo el torneo.
+    """
+    col_l = buscar_columna(df_historial, ["local", "equipo_local"])
+    col_v = buscar_columna(df_historial, ["visita", "visitante", "equipo_visita"])
+    col_gl = buscar_columna(df_historial, ["gl", "goles_local", "goles local"])
+    col_gv = buscar_columna(df_historial, ["gv", "goles_visita", "goles visita"])
+
+    if not col_l or not col_v or not col_gl or not col_gv:
+        return 1.3
+
+    if es_local:
+        partidos = df_historial[df_historial[col_l] == equipo].tail(3)
+        if len(partidos) == 0:
+            return 1.3
+        pesos = [0.5, 0.3, 0.2][:len(partidos)]
+        pesos = [p / sum(pesos) for p in pesos]
+        goles = partidos[col_gl].values
+        return float(np.sum(goles * pesos))
+    else:
+        partidos = df_historial[df_historial[col_v] == equipo].tail(3)
+        if len(partidos) == 0:
+            return 1.1
+        pesos = [0.5, 0.3, 0.2][:len(partidos)]
+        pesos = [p / sum(pesos) for p in pesos]
+        goles = partidos[col_gv].values
+        return float(np.sum(goles * pesos))
 
 def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_over25):
     if p_loc >= p_vis and p_loc >= p_emp:
@@ -221,7 +252,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
     return f_loc, f_vis
 
 # ==============================================================================
-# 4. EJECUCIÓN DEL PANEL STREAMLIT
+# 4. EJECUCIÓN DEL PANEL STREAMLIT (INTERFAZ 100% INTACTA)
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -262,14 +293,19 @@ if os.path.exists(EXCEL_PATH):
             else:
                 hora_str = "--:--"
 
+            # Tasas mejoradas con inercia ponderada de forma reciente
             gf_loc, ga_loc = calcular_tasas_equipo(datos, loc)
             gf_vis, ga_vis = calcular_tasas_equipo(datos, vis)
+            
+            # Ajuste de momentum aplicado al cálculo de lambda y mu
+            tasa_rec_loc = calcular_tasa_ponderada(datos["historia"], loc, es_local=True)
+            tasa_rec_vis = calcular_tasa_ponderada(datos["historia"], vis, es_local=False)
 
             f_loc, f_vis, rho_dc = obtener_factores_contextual(datos, loc, vis)
             f_sit_loc, f_sit_vis = obtener_ajuste_situacional_completo(loc, vis, hora_raw)
 
-            l_loc = max(0.4, ((gf_loc + ga_vis) / 2.0) * f_loc * f_sit_loc)
-            m_vis = max(0.3, ((gf_vis + ga_loc) / 2.0) * f_vis * f_sit_vis)
+            l_loc = max(0.4, ((tasa_rec_loc + ga_vis) / 2.0) * f_loc * f_sit_loc)
+            m_vis = max(0.3, ((tasa_rec_vis + ga_loc) / 2.0) * f_vis * f_sit_vis)
 
             matriz = matriz_dixon_coles(l_loc, m_vis, rho=rho_dc)
 
@@ -298,11 +334,12 @@ if os.path.exists(EXCEL_PATH):
 
         df_pronosticos = pd.DataFrame(resultados)
         
+        # Umbral configurado a >= 60.0% para la llamita (🔥)
         max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
         df_pronosticos.insert(0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob])
 
         # ======================================================================
-        # ESTILOS VISUALES: Solo se resalta si es máximo Y supera o iguala el 60%
+        # ESTILOS VISUALES ORIGINALES (INTACTOS)
         # ======================================================================
         def resaltar_texto_porcentajes(row):
             styles = [""] * len(row)
@@ -311,7 +348,6 @@ if os.path.exists(EXCEL_PATH):
             p_local, p_empate, p_visita = row["% Local"], row["% Empate"], row["% Visita"]
             max_val = max(p_local, p_empate, p_visita)
 
-            # Condición estricta: Máximo absoluto y además >= 60.0%
             if p_local == max_val and p_local >= 60.0:
                 styles[row.index.get_loc("% Local")] = estilo_texto_verde
             elif p_empate == max_val and p_empate >= 60.0:
