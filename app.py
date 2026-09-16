@@ -88,10 +88,14 @@ def cargar_excel(filepath):
     # Cargar pestaña de partidos o primera pestaña
     hoja_partidos = "partidos" if "partidos" in hojas else hojas[0]
     df_partidos = pd.read_excel(filepath, sheet_name=hoja_partidos)
-    df_partidos.columns = df_partidos.columns.str.strip().str.lower()
     
-    if "fecha" in df_partidos.columns:
-        df_partidos["fecha"] = pd.to_datetime(df_partidos["fecha"], errors="coerce")
+    # Limpiar espacios en blanco manteniendo nombres originales
+    df_partidos.columns = df_partidos.columns.astype(str).str.strip()
+    
+    # Estandarizar fecha
+    for col in df_partidos.columns:
+        if col.lower() == "fecha":
+            df_partidos[col] = pd.to_datetime(df_partidos[col], errors="coerce")
 
     return {"partidos": df_partidos}
 
@@ -133,7 +137,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objet
 
     # Determinar hora entera
     hora_num = 15
-    if pd.notna(hora) and hora is None:
+    if pd.notna(hora) and hora is not None:
         try:
             if hasattr(hora, 'hour'):
                 hora_num = hora.hour
@@ -198,22 +202,32 @@ if os.path.exists(EXCEL_PATH):
         datos = cargar_excel(EXCEL_PATH)
         partidos_df = datos["partidos"]
 
-        # Selector de Jornada en la barra lateral
-        if "jornada" in partidos_df.columns:
-            jornadas = sorted(partidos_df["jornada"].dropna().unique())
+        # Selector de Jornada flexible (mayúsculas o minúsculas)
+        col_jornada = next((c for c in partidos_df.columns if c.lower() == "jornada"), None)
+
+        if col_jornada:
+            jornadas = sorted(partidos_df[col_jornada].dropna().unique())
             st.sidebar.header("⚽ Selección de Jornada")
             jornada_sel = st.sidebar.selectbox("Seleccionar Jornada", jornadas)
-            partidos_fecha = partidos_df[partidos_df["jornada"] == jornada_sel].copy()
+            partidos_fecha = partidos_df[partidos_df[col_jornada] == jornada_sel].copy()
         else:
             partidos_fecha = partidos_df.copy()
 
+        # Detección flexible de nombres de columnas
+        col_local = next((c for c in partidos_fecha.columns if c.lower() == "local"), "Local")
+        col_visita = next((c for c in partidos_fecha.columns if c.lower() == "visita"), "Visita")
+        col_fecha = next((c for c in partidos_fecha.columns if c.lower() == "fecha"), "Fecha")
+        col_hora = next((c for c in partidos_fecha.columns if c.lower() == "hora"), "Hora")
+        col_obj_loc = next((c for c in partidos_fecha.columns if "objetivo" in c.lower() and "local" in c.lower()), None)
+        col_obj_vis = next((c for c in partidos_fecha.columns if "objetivo" in c.lower() and "visita" in c.lower()), None)
+
         resultados = []
         for _, row in partidos_fecha.iterrows():
-            loc, vis = str(row["local"]), str(row["visita"])
-            fecha_p = row.get("fecha", None)
+            loc, vis = str(row[col_local]), str(row[col_visita])
+            fecha_p = row.get(col_fecha, None)
 
             # Formato de Hora
-            hora_raw = row.get("hora", None)
+            hora_raw = row.get(col_hora, None)
             if pd.notna(hora_raw) and hora_raw is not None:
                 if hasattr(hora_raw, 'strftime'):
                     hora_str = hora_raw.strftime("%H:%M")
@@ -223,8 +237,8 @@ if os.path.exists(EXCEL_PATH):
                 hora_str = "--:--"
 
             # Objetivos del Clausura si existen en el Excel
-            obj_loc = row.get("objetivo_local", "normal")
-            obj_vis = row.get("objetivo_visita", "normal")
+            obj_loc = row.get(col_obj_loc, "normal") if col_obj_loc else "normal"
+            obj_vis = row.get(col_obj_vis, "normal") if col_obj_vis else "normal"
 
             # Cálculo de tasas de gol
             gf_loc, ga_loc = calcular_tasas_equipo(datos, loc, antes_de=fecha_p)
