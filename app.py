@@ -276,16 +276,30 @@ def cargar_excel(fuente):
             pd.read_excel(xls, sheet_name="Historial_H2H")
         )
 
-    # 3. CARGA DE DATA GEOGRÁFICA (Pasto / Clima)
+   # 3. CARGA DE DATA GEOGRÁFICA (Pasto / Clima)
     geo = pd.DataFrame()
     if "Data_Geografica" in hojas:
         geo = estandarizar_columnas(
             pd.read_excel(xls, sheet_name="Data_Geografica")
         )
 
-    # El return debe entregar todas las variables listas
-    return partidos, apertura, clausura, acumulada, geo, h2h
+    # 4. CARGAR TABLA CLAUSURA SI EXISTE
+    tabla_clausura = pd.DataFrame()
+    if "Tabla_Clausura" in hojas:
+        tabla_clausura = estandarizar_columnas(
+            pd.read_excel(xls, sheet_name="Tabla_Clausura")
+        )
 
+    # El return debe entregar un diccionario con todas las variables listas
+    return {
+        "partidos": partidos,
+        "apertura": apertura,
+        "clausura": clausura,
+        "acumulada": acumulada,
+        "tabla_clausura": tabla_clausura,
+        "geo": geo,
+        "h2h": h2h,
+    }
 
 # =========================================================
 # 7. PREPARAR RESULTADOS
