@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# Estilo CSS para aplicar el verde corporativo exacto de Quipus Data en los encabezados
+# Estilo CSS para aplicar la cuadrícula y el verde corporativo exacto en encabezados
 st.markdown(
     """
     <style>
@@ -52,7 +52,7 @@ else:
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
 # ==============================================================================
-# 2. FUNCIONES MATEMÁTICAS Y MOMENTUM (BACKEND)
+# 2. FUNCIONES MATEMÁTICAS, MOMENTUM Y RECOMENDACIÓN COMBINADA (BACKEND)
 # ==============================================================================
 
 
@@ -111,18 +111,30 @@ def calcular_tasa_ponderada(df_historial, equipo, es_local=True):
 
 
 def obtener_marcador_y_recomendacion(
-    matriz, p_loc, p_emp, p_vis, loc, vis, p_over25
+    matriz, p_loc, p_emp, p_vis, loc, vis, p_over25, p_btts
 ):
+  # Determinar el ganador base
   if p_loc >= p_vis and p_loc >= p_emp:
     ganador = "Local"
-    rec = f"Gana {loc}"
+    equipo_ganador = loc
   elif p_vis > p_loc and p_vis >= p_emp:
     ganador = "Visita"
-    rec = f"Gana {vis}"
+    equipo_ganador = vis
   else:
     ganador = "Empate"
+    equipo_ganador = "Empate"
+
+  # Lógica de Recomendación Combinada
+  if ganador != "Empate":
+    rec = f"Gana {equipo_ganador}"
+    if p_over25 >= 50.0:
+      rec += " + Más de 2.5"
+    elif p_btts >= 50.0:
+      rec += " + Ambos marcan"
+  else:
     rec = "Empate"
 
+  # Cálculo del marcador modal exacto
   max_p = -1.0
   best_i, best_j = 1, 0
 
@@ -138,7 +150,7 @@ def obtener_marcador_y_recomendacion(
 
       if es_valido:
         es_over = i + j >= 3
-        if (p_over25 >= 0.5 and es_over) or (p_over25 < 0.5 and not es_over):
+        if (p_over25 >= 50.0 and es_over) or (p_over25 < 50.0 and not es_over):
           peso = matriz[i, j] * 1.5
         else:
           peso = matriz[i, j]
@@ -377,7 +389,14 @@ if os.path.exists(EXCEL_PATH):
       )
 
       marcador, rec = obtener_marcador_y_recomendacion(
-          matriz, p_loc, p_emp, p_vis, loc, vis, p_over25
+          matriz,
+          p_loc * 100,
+          p_emp * 100,
+          p_vis * 100,
+          loc,
+          vis,
+          p_over25 * 100,
+          p_btts * 100,
       )
 
       fecha_limpia = (
@@ -421,7 +440,6 @@ if os.path.exists(EXCEL_PATH):
       )
       max_val = max(p_local, p_empate, p_visita)
 
-      # Resaltar porcentajes altos
       if p_local == max_val and p_local >= 60.0:
         styles[row.index.get_loc("% Local")] = estilo_texto_verde
       elif p_empate == max_val and p_empate >= 60.0:
@@ -435,7 +453,6 @@ if os.path.exists(EXCEL_PATH):
       if row["Ambos marcan: Sí"] >= 50.0:
         styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_texto_verde
 
-      # Si el porcentaje dominante es de 70% o más, resaltar la columna Recomendación en verde y negrita
       if max_val >= 70.0:
         styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
 
