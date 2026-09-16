@@ -5,7 +5,7 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA STREAMLIT Y LOGO CORPORATIVO
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO DE CUADRÍCULA CSS
 # ==============================================================================
 st.set_page_config(
     page_title="Predicción Liga 1 Perú - Quipus Data",
@@ -13,7 +13,26 @@ st.set_page_config(
     layout="wide",
 )
 
-# Búsqueda flexible del logo corporativo (Sin alterar diseño previo)
+# Estilo CSS para forzar la cuadrícula completa en las tablas
+st.markdown(
+    """
+    <style>
+    table, th, td {
+        border: 1px solid #9ca592 !important;
+        border-collapse: collapse !important;
+        text-align: center !important;
+    }
+    th {
+        background-color: #9ca592 !important;
+        color: white !important;
+        font-weight: bold;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Búsqueda flexible del logo corporativo
 logo_encontrado = None
 for posible_nombre in [
     "logo.png",
@@ -33,7 +52,7 @@ else:
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
 # ==============================================================================
-# 2. FUNCIONES MATEMÁTICAS, DIXON-COLES Y AJUSTE DE MOMENTUM (BACKEND)
+# 2. FUNCIONES MATEMÁTICAS Y MOMENTUM (BACKEND)
 # ==============================================================================
 
 
@@ -65,10 +84,6 @@ def matriz_dixon_coles(lambda_, mu, rho=0.13, max_goles=6):
 
 
 def calcular_tasa_ponderada(df_historial, equipo, es_local=True):
-  """Mejora experta: Pondera los últimos 3 partidos jugados dándoles mayor peso
-
-  (momentum), reduciendo el sesgo de la inercia acumulada en todo el torneo.
-  """
   col_l = buscar_columna(df_historial, ["local", "equipo_local"])
   col_v = buscar_columna(
       df_historial, ["visita", "visitante", "equipo_visita"]
@@ -85,16 +100,14 @@ def calcular_tasa_ponderada(df_historial, equipo, es_local=True):
       return 1.3
     pesos = [0.5, 0.3, 0.2][: len(partidos)]
     pesos = [p / sum(pesos) for p in pesos]
-    goles = partidos[col_gl].values
-    return float(np.sum(goles * pesos))
+    return float(np.sum(partidos[col_gl].values * pesos))
   else:
     partidos = df_historial[df_historial[col_v] == equipo].tail(3)
     if len(partidos) == 0:
       return 1.1
     pesos = [0.5, 0.3, 0.2][: len(partidos)]
     pesos = [p / sum(pesos) for p in pesos]
-    goles = partidos[col_gv].values
-    return float(np.sum(goles * pesos))
+    return float(np.sum(partidos[col_gv].values * pesos))
 
 
 def obtener_marcador_y_recomendacion(
@@ -200,7 +213,6 @@ def buscar_columna(df, palabras_clave):
 
 def calcular_tasas_equipo(datos, equipo):
   df = datos["historia"].copy()
-
   col_local = buscar_columna(df, ["local", "equipo_local"])
   col_visita = buscar_columna(df, ["visita", "visitante", "equipo_visita"])
   col_gl = buscar_columna(df, ["gl", "goles_local", "goles local"])
@@ -245,7 +257,6 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
   grandes_jerarquia = ["Universitario", "Sporting Cristal", "Alianza Lima"]
 
   f_loc, f_vis = 1.0, 1.0
-
   hora_num = 15
   if pd.notna(hora) and hora is not None:
     try:
@@ -266,7 +277,6 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
     elif hora_num in [14, 15]:
       f_loc *= 1.05
       f_vis *= 0.88
-
   elif local in plazas_altura and not visita_es_altura:
     if hora_num in [11, 12, 13]:
       f_loc *= 1.15
@@ -285,7 +295,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
 
 
 # ==============================================================================
-# 4. EJECUCIÓN DEL PANEL STREAMLIT (ESTILO DE TABLA DEFINITIVO APLICADO)
+# 4. RENDERIZADO DE TABLA CON CUADRÍCULA COMPLETA
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -332,7 +342,6 @@ if os.path.exists(EXCEL_PATH):
       else:
         hora_str = "--:--"
 
-      # Tasas mejoradas con inercia ponderada de forma reciente
       gf_loc, ga_loc = calcular_tasas_equipo(datos, loc)
       gf_vis, ga_vis = calcular_tasas_equipo(datos, vis)
 
@@ -371,7 +380,6 @@ if os.path.exists(EXCEL_PATH):
           matriz, p_loc, p_emp, p_vis, loc, vis, p_over25
       )
 
-      # Formatear la fecha limpia para que aparezca como DD/MM/YYYY
       fecha_limpia = (
           str(fecha_p)[:10] if pd.notna(fecha_p) else "Por definir"
       )
@@ -396,15 +404,12 @@ if os.path.exists(EXCEL_PATH):
 
     df_pronosticos = pd.DataFrame(resultados)
 
-    # Umbral configurado a >= 60.0% para la llamita (🔥)
     max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
     df_pronosticos.insert(
         0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob]
     )
 
-    # ======================================================================
-    # ESTILOS VISUALES EXACTOS (DISEÑO CLEAN / OLIVA CORPORATIVO)
-    # ======================================================================
+
     def resaltar_texto_porcentajes(row):
       styles = [""] * len(row)
       estilo_texto_verde = "color: #1e7e34; font-weight: bold;"
@@ -431,43 +436,18 @@ if os.path.exists(EXCEL_PATH):
 
       return styles
 
-    estilo_tabla = (
-        df_pronosticos.style.apply(resaltar_texto_porcentajes, axis=1)
-        .format(
-            "{:.1f}",
-            subset=[
-                "% Local",
-                "% Empate",
-                "% Visita",
-                "Más de 2.5 goles",
-                "Ambos marcan: Sí",
-            ],
-        )
-        .set_properties(
-            **{
-                "border-color": "#e0e2dc",
-                "font-family": "sans-serif",
-                "text-align": "center",
-            }
-        )
-        .set_table_styles(
-            [
-                {
-                    "selector": "th",
-                    "props": [
-                        ("background-color", "#9ca592"),
-                        ("color", "#ffffff"),
-                        ("font-weight", "bold"),
-                        ("text-align", "center"),
-                        ("padding", "8px"),
-                    ],
-                },
-                {
-                    "selector": "tbody tr:hover",
-                    "props": [("background-color", "#f4f5f2 !important")],
-                },
-            ]
-        )
+
+    estilo_tabla = df_pronosticos.style.apply(
+        resaltar_texto_porcentajes, axis=1
+    ).format(
+        "{:.1f}",
+        subset=[
+            "% Local",
+            "% Empate",
+            "% Visita",
+            "Más de 2.5 goles",
+            "Ambos marcan: Sí",
+        ],
     )
 
     st.subheader("📋 Resumen de pronósticos")
