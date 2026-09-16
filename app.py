@@ -391,28 +391,45 @@ if archivo_excel:
 # Convertir resultados a DataFrame
         df_pronosticos = pd.DataFrame(resultados)
         
+        # Renombrar columnas para mejor lectura visual
+        df_pronosticos = df_pronosticos.rename(columns={
+            '% +2.5': '%>2.5',
+            '% BTTS Sí': 'Ambos marcan: Sí'
+        })
+        
         # 1. Agregar columna 🔥 a partidos calientes (>= 50%)
         max_prob = df_pronosticos[['% Local', '% Empate', '% Visita']].max(axis=1)
         df_pronosticos.insert(0, '🔥', ['🔥' if p >= 50.0 else '➖' for p in max_prob])
 
-        # 2. Función para resaltar en verde la celda con mayor probabilidad
-        def resaltar_max_probabilidad(row):
+        # 2. Función para resaltar en verde la probabilidad más alta y los indicadores clave (>=50%)
+        def resaltar_indicadores(row):
             styles = [''] * len(row)
-            p_local, p_empate, p_visita = row['% Local'], row['% Empate'], row['% Visita']
-            max_val = max(p_local, p_empate, p_visita)
             estilo_verde = 'background-color: #d4edda; color: #155724; font-weight: bold;'
             
+            # Resaltar la mayor probabilidad entre Local, Empate y Visita
+            p_local, p_empate, p_visita = row['% Local'], row['% Empate'], row['% Visita']
+            max_val = max(p_local, p_empate, p_visita)
             if p_local == max_val:
                 styles[row.index.get_loc('% Local')] = estilo_verde
             elif p_empate == max_val:
                 styles[row.index.get_loc('% Empate')] = estilo_verde
             elif p_visita == max_val:
                 styles[row.index.get_loc('% Visita')] = estilo_verde
+            
+            # Resaltar %>2.5 si es >= 50%
+            if row['%>2.5'] >= 50.0:
+                styles[row.index.get_loc('%>2.5')] = estilo_verde
+                
+            # Resaltar Ambos marcan: Sí si es >= 50%
+            if row['Ambos marcan: Sí'] >= 50.0:
+                styles[row.index.get_loc('Ambos marcan: Sí')] = estilo_verde
+                
             return styles
 
         # 3. Estilizado visual corporativo Quipus Data
         estilo_tabla = df_pronosticos.style\
-            .apply(resaltar_max_probabilidad, axis=1)\
+            .apply(resaltar_indicadores, axis=1)\
+            .format("{:.1f}", subset=['% Local', '% Empate', '% Visita', '%>2.5', 'Ambos marcan: Sí'])\
             .set_properties(**{
                 'border-color': '#e0e2dc',
                 'font-family': 'sans-serif',
