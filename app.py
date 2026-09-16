@@ -268,12 +268,17 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
 
   f_loc, f_vis = 1.0, 1.0
   hora_num = 15
-  if pd.notna(hora) and hora is not None:
+
+  if pd.notna(hora) and hora is not None and str(hora).strip() != "":
     try:
       if hasattr(hora, "hour"):
         hora_num = hora.hour
       else:
-        hora_num = int(str(hora).split(":")[0])
+        hora_str_clean = str(hora).strip()
+        if ":" in hora_str_clean:
+          hora_num = int(hora_str_clean.split(":")[0])
+        else:
+          hora_num = int(hora_str_clean)
     except Exception:
       hora_num = 15
 
@@ -309,7 +314,6 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
-# Diccionario para traducir los días al español de manera segura
 dias_espanol = {
     "Monday": "Lunes",
     "Tuesday": "Martes",
@@ -362,9 +366,8 @@ if os.path.exists(EXCEL_PATH):
           row[col_fecha] if col_fecha and col_fecha in row else "Por definir"
       )
 
-      # Extracción y conversión del día de la semana en español
       nombre_dia = "Por definir"
-      if pd.notna(fecha_p):
+      if pd.notna(fecha_p) and str(fecha_p).strip() != "":
         try:
           dt_val = pd.to_datetime(fecha_p)
           dia_ingles = dt_val.strftime("%A")
@@ -373,7 +376,7 @@ if os.path.exists(EXCEL_PATH):
           nombre_dia = "Por definir"
 
       hora_raw = row[col_hora] if col_hora and col_hora in row else None
-      if pd.notna(hora_raw) and hora_raw is not None:
+      if pd.notna(hora_raw) and str(hora_raw).strip() != "":
         if hasattr(hora_raw, "strftime"):
           hora_str = hora_raw.strftime("%H:%M")
         else:
@@ -456,7 +459,6 @@ if os.path.exists(EXCEL_PATH):
         0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob]
     )
 
-    # Vista resumida usando "Día" en lugar de "Fecha" numérica
     df_resumido = df_pronosticos[
         ["🔥", "Día", "Hora", "Local", "Visita", "Marcador_Modal", "Recomendacion"]
     ].copy()
@@ -492,12 +494,13 @@ if os.path.exists(EXCEL_PATH):
       return styles
 
 
-def resaltar_texto_resumen(row):
-  styles = [""] * len(row)
-  estilo_texto_verde = "color: #2e6930; font-weight: bold;"
-  if row["🔥"] == "🔥":
-    styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
-  return styles
+    def resaltar_texto_resumen(row):
+      styles = [""] * len(row)
+      estilo_texto_verde = "color: #2e6930; font-weight: bold;"
+      if row["🔥"] == "🔥":
+        styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
+      return styles
+
 
     estilo_tabla_completa = df_pronosticos.style.apply(
         resaltar_texto_porcentajes, axis=1
