@@ -305,7 +305,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
 
 
 # ==============================================================================
-# 4. RENDERIZADO DE TABLAS (VISTA RESUMIDA Y VISTA DETALLADA)
+# 4. CONTROLES DE BARRA LATERAL Y RENDERIZADO DE TABLAS
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -326,15 +326,23 @@ if os.path.exists(EXCEL_PATH):
       st.error("❌ No se pudieron identificar las columnas de equipos.")
       st.stop()
 
+    # --- BARRA LATERAL ---
+    st.sidebar.header("⚽ Selección de Jornada")
     if col_jornada:
       jornadas = sorted(partidos_df[col_jornada].dropna().unique())
-      st.sidebar.header("⚽ Selección de Jornada")
       jornada_sel = st.sidebar.selectbox("Seleccionar Jornada", jornadas)
       partidos_fecha = partidos_df[
           partidos_df[col_jornada] == jornada_sel
       ].copy()
     else:
       partidos_fecha = partidos_df.copy()
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("📊 Selección de Resultado")
+    tipo_vista = st.sidebar.radio(
+        "Vista de la tabla", ["Vista Resumida", "Vista Completa"]
+    )
+    # ---------------------
 
     resultados = []
     for _, row in partidos_fecha.iterrows():
@@ -426,10 +434,10 @@ if os.path.exists(EXCEL_PATH):
         0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob]
     )
 
-    # Creamos un DataFrame exclusivo para la vista resumida (Celular)
     df_resumido = df_pronosticos[
         ["🔥", "Fecha", "Hora", "Local", "Visita", "Marcador_Modal", "Recomendacion"]
     ].copy()
+
 
     def resaltar_texto_porcentajes(row):
       styles = [""] * len(row)
@@ -460,16 +468,15 @@ if os.path.exists(EXCEL_PATH):
 
       return styles
 
+
     def resaltar_texto_resumen(row):
       styles = [""] * len(row)
       estilo_texto_verde = "color: #2e6930; font-weight: bold;"
-      # Si la recomendación contiene texto fuerte o podemos evaluar el max original
-      # Para mantenerlo simple, si la celda de recomendación es larga o queremos destacarla:
       if "Gana" in str(row["Recomendacion"]):
         styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
       return styles
 
-    # Estilos para ambas tablas
+
     estilo_tabla_completa = df_pronosticos.style.apply(
         resaltar_texto_porcentajes, axis=1
     ).format(
@@ -489,20 +496,14 @@ if os.path.exists(EXCEL_PATH):
 
     st.subheader("📋 Resumen de pronósticos")
 
-    # Pestañas para elegir entre Vista Móvil (Resumida) y Vista PC (Completa)
-    pestana_celular, pestana_pc = st.tabs(
-        ["📱 Vista Resumida (Ideal para Celular)", "💻 Vista Completa (Detallada)"]
-    )
-
-    with pestana_celular:
+    if tipo_vista == "Vista Resumida":
       st.markdown(
           "*Vista ligera optimizada con los datos clave para teléfonos móviles.*"
       )
       st.dataframe(
           estilo_tabla_resumida, use_container_width=True, hide_index=True
       )
-
-    with pestana_pc:
+    else:
       st.markdown(
           "*Vista extendida con porcentajes completos de probabilidad y goles.*"
       )
