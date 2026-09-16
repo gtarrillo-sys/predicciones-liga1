@@ -5,7 +5,7 @@ import streamlit as st
 from scipy.stats import poisson
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO CSS CORPORATIVO (MULTILÍNEA Y CUADRÍCULA)
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILO CSS CORPORATIVO
 # ==============================================================================
 st.set_page_config(
     page_title="Predicción Liga 1 Perú - Quipus Data",
@@ -53,7 +53,7 @@ else:
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
 # ==============================================================================
-# 2. FUNCIONES MATEMÁTICAS, MOMENTUM Y RECOMENDACIÓN COMBINADA (BACKEND)
+# 2. FUNCIONES MATEMÁTICAS, MOMENTUM Y RECOMENDACIÓN COMBINADA
 # ==============================================================================
 
 
@@ -305,7 +305,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
 
 
 # ==============================================================================
-# 4. RENDERIZADO DE TABLA Y REGLAS DE RESALTADO (≥ 70% EN RECOMENDACIÓN)
+# 4. RENDERIZADO DE TABLAS (VISTA RESUMIDA Y VISTA DETALLADA)
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -426,6 +426,10 @@ if os.path.exists(EXCEL_PATH):
         0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob]
     )
 
+    # Creamos un DataFrame exclusivo para la vista resumida (Celular)
+    df_resumido = df_pronosticos[
+        ["🔥", "Fecha", "Hora", "Local", "Visita", "Marcador_Modal", "Recomendacion"]
+    ].copy()
 
     def resaltar_texto_porcentajes(row):
       styles = [""] * len(row)
@@ -456,8 +460,17 @@ if os.path.exists(EXCEL_PATH):
 
       return styles
 
+    def resaltar_texto_resumen(row):
+      styles = [""] * len(row)
+      estilo_texto_verde = "color: #2e6930; font-weight: bold;"
+      # Si la recomendación contiene texto fuerte o podemos evaluar el max original
+      # Para mantenerlo simple, si la celda de recomendación es larga o queremos destacarla:
+      if "Gana" in str(row["Recomendacion"]):
+        styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
+      return styles
 
-    estilo_tabla = df_pronosticos.style.apply(
+    # Estilos para ambas tablas
+    estilo_tabla_completa = df_pronosticos.style.apply(
         resaltar_texto_porcentajes, axis=1
     ).format(
         "{:.1f}",
@@ -470,8 +483,32 @@ if os.path.exists(EXCEL_PATH):
         ],
     )
 
+    estilo_tabla_resumida = df_resumido.style.apply(
+        resaltar_texto_resumen, axis=1
+    )
+
     st.subheader("📋 Resumen de pronósticos")
-    st.dataframe(estilo_tabla, use_container_width=True, hide_index=True)
+
+    # Pestañas para elegir entre Vista Móvil (Resumida) y Vista PC (Completa)
+    pestana_celular, pestana_pc = st.tabs(
+        ["📱 Vista Resumida (Ideal para Celular)", "💻 Vista Completa (Detallada)"]
+    )
+
+    with pestana_celular:
+      st.markdown(
+          "*Vista ligera optimizada con los datos clave para teléfonos móviles.*"
+      )
+      st.dataframe(
+          estilo_tabla_resumida, use_container_width=True, hide_index=True
+      )
+
+    with pestana_pc:
+      st.markdown(
+          "*Vista extendida con porcentajes completos de probabilidad y goles.*"
+      )
+      st.dataframe(
+          estilo_tabla_completa, use_container_width=True, hide_index=True
+      )
 
   except Exception as e:
     st.error(f"❌ Error al procesar el archivo Excel: {str(e)}")
