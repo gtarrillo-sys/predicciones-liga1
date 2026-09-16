@@ -77,19 +77,47 @@ def obtener_marcador_modal(matriz, p_loc, p_emp, p_vis):
         return f"{best_i} - {best_j}"
 
 # ==============================================================================
-# 3. FUNCIONES DE PROCESAMIENTO Y AJUSTES SITUACIONALES
+# 3. CARGA INTELIGENTE DE DATOS Y HISTORIALES
 # ==============================================================================
 @st.cache_data
 def cargar_excel(filepath):
     xls = pd.ExcelFile(filepath)
     hojas = xls.sheet_names
-    hoja_partidos = "partidos" if "partidos" in hojas else hojas[0]
+    
+    # 1. Buscar prioritariamente la hoja de partidos programados
+    hoja_partidos = None
+    for hoja in ["Partidos_Fecha", "Resultados_Clausura", "Resultados_Apertura"]:
+        if hoja in hojas:
+            hoja_partidos = hoja
+            break
+            
+    # 2. Si no está por nombre exacto, buscar por columnas de equipos
+    if not hoja_partidos:
+        for hoja in hojas:
+            temp_df = pd.read_excel(filepath, sheet_name=hoja)
+            temp_cols = [str(c).lower().strip() for c in temp_df.columns]
+            if any(k in temp_cols for k in ["local", "visita", "visitante"]):
+                hoja_partidos = hoja
+                break
+                
+    if not hoja_partidos:
+        hoja_partidos = hojas[0]
+
     df_partidos = pd.read_excel(filepath, sheet_name=hoja_partidos)
     df_partidos.columns = df_partidos.columns.astype(str).str.strip()
-    return {"partidos": df_partidos}
+
+    # Cargar también tablas históricas si existen para alimentar las tasas de goles
+    df_historia = None
+    if "Resultados_Clausura" in hojas:
+        df_historia = pd.read_excel(filepath, sheet_name="Resultados_Clausura")
+    elif "Resultados_Apertura" in hojas:
+        df_historia = pd.read_excel(filepath, sheet_name="Resultados_Apertura")
+    else:
+        df_historia = df_partidos
+
+    return {"partidos": df_partidos, "historia": df_historia}
 
 def buscar_columna(df, palabras_clave):
-    """Busca una columna que contenga alguna de las palabras clave"""
     for col in df.columns:
         col_clean = str(col).lower().strip()
         for clave in palabras_clave:
@@ -97,21 +125,19 @@ def buscar_columna(df, palabras_clave):
                 return col
     return None
 
-def calcular_tasas_equipo(datos, equipo, col_local, col_visita, col_gl, col_gv, col_fecha, antes_de=None):
-    df = datos["partidos"].copy()
-    if antes_de is not None and col_fecha and col_fecha in df.columns:
-        df = df[df[col_fecha] < antes_de]
+def calcular_tasas_equipo(datos, equipo):
+    df = datos["historia"].copy()
+    
+    col_local = buscar_columna(df, ["local", "equipo_local"])
+    col_visita = buscar_columna(df, ["visita", "visitante", "equipo_visita"])
+    col_gl = buscar_columna(df, ["gl", "goles_local", "goles local"])
+    col_gv = buscar_columna(df, ["gv", "goles_visita", "goles visita"])
 
-    if col_gl and col_gv and col_gl in df.columns and col_gv in df.columns:
-        jugados = df[df[col_gl].notna() & df[col_gv].notna()]
-    else:
+    if not col_local or not col_visita or not col_gl or not col_gv:
         return 1.3, 1.2
 
-    if col_local in jugados.columns and col_visita in jugados.columns:
-        locales = jugados[jugados[col_local] == equipo]
-        visitas = jugados[jugados[col_visita] == equipo]
-    else:
-        return 1.3, 1.2
+    locales = df[df[col_local] == equipo]
+    visitas = df[df[col_visita] == equipo]
 
     goles_favor = locales[col_gl].sum() + visitas[col_gv].sum()
     goles_contra = locales[col_gv].sum() + visitas[col_gl].sum()
@@ -125,7 +151,7 @@ def calcular_tasas_equipo(datos, equipo, col_local, col_visita, col_gl, col_gv, 
 def obtener_factores_contextual(datos, local, visita):
     return 1.15, 0.88, 0.13
 
-def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objetivo_vis):
+def obtener_ajuste_situacional_completo(local, visita, hora):
     plazas_calor = ["Alianza Atlético", "Atlético Grau", "Comerciantes Unidos", "Union Comercio"]
     plazas_altura = ["Cienciano", "Cusco FC", "Deportivo Garcilaso", "Sport Huancayo", "FC Cajamarca", "ADT", "Melgar"]
     grandes_jerarquia = ["Universitario", "Sporting Cristal", "Alianza Lima"]
@@ -167,26 +193,10 @@ def obtener_ajuste_situacional_completo(local, visita, hora, objetivo_loc, objet
     if visita in grandes_jerarquia:
         f_vis *= 1.10
 
-    obj_loc = str(objetivo_loc).lower() if pd.notna(objetivo_loc) else ""
-    obj_vis = str(objetivo_vis).lower() if pd.notna(objetivo_vis) else ""
-
-    if ("titulo" in obj_loc or "copa" in obj_loc) and ("titulo" in obj_vis or "copa" in obj_vis):
-        f_loc *= 1.08
-        f_vis *= 1.08
-    elif "descenso" in obj_loc and "descenso" in obj_vis:
-        f_loc *= 0.88
-        f_vis *= 0.88
-    elif "descenso" in obj_loc and "nada" in obj_vis:
-        f_loc *= 1.12
-        f_vis *= 0.90
-    elif "descenso" in obj_vis and "nada" in obj_loc:
-        f_vis *= 1.10
-        f_loc *= 0.92
-
     return f_loc, f_vis
 
 # ==============================================================================
-# 4. EJECUCIÓN DEL PANEL STREAMLIT (CARGA AUTOMÁTICA DESDE GITHUB)
+# 4. EJECUCIÓN DEL PANEL STREAMLIT
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -195,27 +205,16 @@ if os.path.exists(EXCEL_PATH):
         datos = cargar_excel(EXCEL_PATH)
         partidos_df = datos["partidos"]
 
-        # Detección ultra-flexible de columnas
-        col_local = buscar_columna(partidos_df, ["local", "equipo_local", "equipo local", "loc"])
-        col_visita = buscar_columna(partidos_df, ["visita", "visitante", "equipo_visita", "equipo visita", "vis"])
-        col_jornada = buscar_columna(partidos_df, ["jornada", "fecha_liga", "fecha liga", "fechadela_liga"])
+        col_local = buscar_columna(partidos_df, ["local", "equipo_local", "loc"])
+        col_visita = buscar_columna(partidos_df, ["visita", "visitante", "equipo_visita", "vis"])
+        col_jornada = buscar_columna(partidos_df, ["jornada", "fecha_liga"])
         col_fecha = buscar_columna(partidos_df, ["fecha", "date"])
         col_hora = buscar_columna(partidos_df, ["hora", "time"])
-        col_gl = buscar_columna(partidos_df, ["gl", "goles_local", "goles local"])
-        col_gv = buscar_columna(partidos_df, ["gv", "goles_visita", "goles visita"])
-        col_obj_loc = buscar_columna(partidos_df, ["objetivo_local", "obj_local", "objetivo local"])
-        col_obj_vis = buscar_columna(partidos_df, ["objetivo_visita", "obj_visita", "objetivo visita"])
 
-        # Validación de seguridad
         if not col_local or not col_visita:
-            st.error(f"❌ No se pudieron identificar las columnas de los equipos. Nombres detectados en tu Excel: {list(partidos_df.columns)}")
+            st.error(f"❌ No se pudieron identificar las columnas de equipos. Columnas detectadas: {list(partidos_df.columns)}")
             st.stop()
 
-        # Normalizar fechas si existen
-        if col_fecha:
-            partidos_df[col_fecha] = pd.to_datetime(partidos_df[col_fecha], errors="coerce")
-
-        # Selector de Jornada
         if col_jornada:
             jornadas = sorted(partidos_df[col_jornada].dropna().unique())
             st.sidebar.header("⚽ Selección de Jornada")
@@ -227,9 +226,8 @@ if os.path.exists(EXCEL_PATH):
         resultados = []
         for _, row in partidos_fecha.iterrows():
             loc, vis = str(row[col_local]), str(row[col_visita])
-            fecha_p = row[col_fecha] if col_fecha and col_fecha in row else None
-
-            # Hora
+            fecha_p = row[col_fecha] if col_fecha and col_fecha in row else "Por definir"
+            
             hora_raw = row[col_hora] if col_hora and col_hora in row else None
             if pd.notna(hora_raw) and hora_raw is not None:
                 if hasattr(hora_raw, 'strftime'):
@@ -239,17 +237,11 @@ if os.path.exists(EXCEL_PATH):
             else:
                 hora_str = "--:--"
 
-            # Objetivos
-            obj_loc = row[col_obj_loc] if col_obj_loc and col_obj_loc in row else "normal"
-            obj_vis = row[col_obj_vis] if col_obj_vis and col_obj_vis in row else "normal"
+            gf_loc, ga_loc = calcular_tasas_equipo(datos, loc)
+            gf_vis, ga_vis = calcular_tasas_equipo(datos, vis)
 
-            # Tasas de gol
-            gf_loc, ga_loc = calcular_tasas_equipo(datos, loc, col_local, col_visita, col_gl, col_gv, col_fecha, antes_de=fecha_p)
-            gf_vis, ga_vis = calcular_tasas_equipo(datos, vis, col_local, col_visita, col_gl, col_gv, col_fecha, antes_de=fecha_p)
-
-            # Factores
             f_loc, f_vis, rho_dc = obtener_factores_contextual(datos, loc, vis)
-            f_sit_loc, f_sit_vis = obtener_ajuste_situacional_completo(loc, vis, hora_raw, obj_loc, obj_vis)
+            f_sit_loc, f_sit_vis = obtener_ajuste_situacional_completo(loc, vis, hora_raw)
 
             l_loc = max(0.4, ((gf_loc + ga_vis) / 2.0) * f_loc * f_sit_loc)
             m_vis = max(0.3, ((gf_vis + ga_loc) / 2.0) * f_vis * f_sit_vis)
@@ -260,102 +252,34 @@ if os.path.exists(EXCEL_PATH):
             p_emp = float(np.sum(np.diag(matriz)))
             p_vis = float(np.sum(np.triu(matriz, 1)))
 
-            p_over25 = float(
-                1.0 - sum(matriz[i, j] for i in range(6) for j in range(6) if i + j <= 2)
-            )
-            p_btts = float(
-                sum(matriz[i, j] for i in range(1, 6) for j in range(1, 6))
-            )
+            p_over25 = float(1.0 - sum(matriz[i, j] for i in range(6) for j in range(6) if i + j <= 2))
+            p_btts = float(sum(matriz[i, j] for i in range(1, 6) for j in range(1, 6)))
 
             marcador = obtener_marcador_modal(matriz, p_loc, p_emp, p_vis)
-            rec = (
-                f"Gana {loc}"
-                if p_loc > p_vis and p_loc > p_emp
-                else (f"Gana {vis}" if p_vis > p_loc and p_vis > p_emp else "Empate")
-            )
+            rec = f"Gana {loc}" if p_loc > p_vis and p_loc > p_emp else (f"Gana {vis}" if p_vis > p_loc and p_vis > p_emp else "Empate")
 
-            resultados.append(
-                {
-                    "Fecha": (
-                        fecha_p.strftime("%Y-%m-%d") if pd.notna(fecha_p) and hasattr(fecha_p, 'strftime') else "Por definir"
-                    ),
-                    "Hora": hora_str,
-                    "Local": loc,
-                    "Visita": vis,
-                    "% Local": round(p_loc * 100, 1),
-                    "% Empate": round(p_emp * 100, 1),
-                    "% Visita": round(p_vis * 100, 1),
-                    "Más de 2.5 goles": round(p_over25 * 100, 1),
-                    "Ambos marcan: Sí": round(p_btts * 100, 1),
-                    "Marcador_Modal": marcador,
-                    "Recomendacion": rec,
-                }
-            )
+            resultados.append({
+                "Fecha": str(fecha_p)[:10] if pd.notna(fecha_p) else "Por definir",
+                "Hora": hora_str,
+                "Local": loc,
+                "Visita": vis,
+                "% Local": round(p_loc * 100, 1),
+                "% Empate": round(p_emp * 100, 1),
+                "% Visita": round(p_vis * 100, 1),
+                "Más de 2.5 goles": round(p_over25 * 100, 1),
+                "Ambos marcan: Sí": round(p_btts * 100, 1),
+                "Marcador_Modal": marcador,
+                "Recomendacion": rec,
+            })
 
         df_pronosticos = pd.DataFrame(resultados)
-
-        # 1. Agregar 🔥
         max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
         df_pronosticos.insert(0, "🔥", ["🔥" if p >= 50.0 else "➖" for p in max_prob])
 
-        # 2. Resaltar texto verde
-        def resaltar_texto_porcentajes(row):
-            styles = [""] * len(row)
-            estilo_texto_verde = "color: #1e7e34; font-weight: bold;"
-
-            p_local, p_empate, p_visita = row["% Local"], row["% Empate"], row["% Visita"]
-            max_val = max(p_local, p_empate, p_visita)
-
-            if p_local == max_val:
-                styles[row.index.get_loc("% Local")] = estilo_texto_verde
-            elif p_empate == max_val:
-                styles[row.index.get_loc("% Empate")] = estilo_texto_verde
-            elif p_visita == max_val:
-                styles[row.index.get_loc("% Visita")] = estilo_texto_verde
-
-            if row["Más de 2.5 goles"] >= 50.0:
-                styles[row.index.get_loc("Más de 2.5 goles")] = estilo_texto_verde
-
-            if row["Ambos marcan: Sí"] >= 50.0:
-                styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_texto_verde
-
-            return styles
-
-        # 3. Estilo Quipus Data
-        estilo_tabla = (
-            df_pronosticos.style.apply(resaltar_texto_porcentajes, axis=1)
-            .format("{:.1f}", subset=["% Local", "% Empate", "% Visita", "Más de 2.5 goles", "Ambos marcan: Sí"])
-            .set_properties(
-                **{
-                    "border-color": "#e0e2dc",
-                    "font-family": "sans-serif",
-                    "text-align": "center",
-                }
-            )
-            .set_table_styles(
-                [
-                    {
-                        "selector": "th",
-                        "props": [
-                            ("background-color", "#9ca592"),
-                            ("color", "#ffffff"),
-                            ("font-weight", "bold"),
-                            ("text-align", "center"),
-                            ("padding", "8px"),
-                        ],
-                    },
-                    {
-                        "selector": "tbody tr:hover",
-                        "props": [("background-color", "#f4f5f2 !important")],
-                    },
-                ]
-            )
-        )
-
         st.subheader("📋 Resumen de pronósticos")
-        st.dataframe(estilo_tabla, use_container_width=True, hide_index=True)
+        st.dataframe(df_pronosticos, use_container_width=True, hide_index=True)
 
     except Exception as e:
-        st.error(f"Error al procesar el archivo del repositorio: {str(e)}")
+        st.error(f"Error al procesar el archivo Excel: {str(e)}")
 else:
-    st.error(f"❌ No se encontró el archivo '{EXCEL_PATH}' en la raíz del repositorio de GitHub.")
+    st.error(f"❌ No se encontró el archivo '{EXCEL_PATH}'.")
