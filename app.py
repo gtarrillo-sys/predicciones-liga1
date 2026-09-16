@@ -19,7 +19,7 @@ if os.path.exists("logo.png"):
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
 # ==============================================================================
-# 2. FUNCIONES MATEMÁTICAS Y DIXON-COLES
+# 2. FUNCIONES MATEMÁTICAS Y DIXON-COLES (CORREGIDAS)
 # ==============================================================================
 def tau(x, y, lambda_, mu, rho):
     if x == 0 and y == 0:
@@ -46,52 +46,34 @@ def matriz_dixon_coles(lambda_, mu, rho=0.13, max_goles=6):
         matriz /= total
     return matriz
 
-def obtener_marcador_modal(matriz, p_loc, p_emp, p_vis):
-    if p_loc > p_vis and p_loc > p_emp:
-        max_p = -1.0
-        best_i, best_j = 1, 0
-        for i in range(6):
-            for j in range(6):
-                if i > j and matriz[i, j] > max_p:
-                    max_p = matriz[i, j]
-                    best_i, best_j = i, j
-        return f"{best_i} - {best_j}"
-
-    elif p_vis > p_loc and p_emp:
-        max_p = -1.0
-        best_i, best_j = 0, 1
-        for i in range(6):
-            for j in range(6):
-                if j > i and matriz[i, j] > max_p:
-                    max_p = matriz[i, j]
-                    best_i, best_j = i, j
-        return f"{best_i} - {best_j}"
-
-    else:
-        max_p = -1.0
-        best_i, best_j = 1, 1
-        for i in range(6):
-            if matriz[i, i] > max_p:
-                max_p = matriz[i, i]
-                best_i, best_j = i, i
-        return f"{best_i} - {best_j}"
+def obtener_marcador_modal(matriz):
+    """
+    Busca de manera estricta el resultado exacto (i - j) con la probabilidad 
+    individual más alta en toda la matriz de Dixon-Coles, evitando contradicciones.
+    """
+    max_p = -1.0
+    best_i, best_j = 1, 0
+    for i in range(6):
+        for j in range(6):
+            if matriz[i, j] > max_p:
+                max_p = matriz[i, j]
+                best_i, best_j = i, j
+    return f"{best_i} - {best_j}"
 
 # ==============================================================================
-# 3. CARGA INTELIGENTE DE DATOS Y HISTORIALES
+# 3. CARGA INTELIGENTE Y PROCESAMIENTO
 # ==============================================================================
 @st.cache_data
 def cargar_excel(filepath):
     xls = pd.ExcelFile(filepath)
     hojas = xls.sheet_names
     
-    # 1. Buscar prioritariamente la hoja de partidos programados
     hoja_partidos = None
     for hoja in ["Partidos_Fecha", "Resultados_Clausura", "Resultados_Apertura"]:
         if hoja in hojas:
             hoja_partidos = hoja
             break
             
-    # 2. Si no está por nombre exacto, buscar por columnas de equipos
     if not hoja_partidos:
         for hoja in hojas:
             temp_df = pd.read_excel(filepath, sheet_name=hoja)
@@ -106,7 +88,6 @@ def cargar_excel(filepath):
     df_partidos = pd.read_excel(filepath, sheet_name=hoja_partidos)
     df_partidos.columns = df_partidos.columns.astype(str).str.strip()
 
-    # Cargar también tablas históricas si existen para alimentar las tasas de goles
     df_historia = None
     if "Resultados_Clausura" in hojas:
         df_historia = pd.read_excel(filepath, sheet_name="Resultados_Clausura")
@@ -196,7 +177,7 @@ def obtener_ajuste_situacional_completo(local, visita, hora):
     return f_loc, f_vis
 
 # ==============================================================================
-# 4. EJECUCIÓN DEL PANEL STREAMLIT
+# 4. EJECUCIÓN DEL PANEL STREAMLIT CON DISEÑO ORIGINAL
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 
@@ -255,7 +236,7 @@ if os.path.exists(EXCEL_PATH):
             p_over25 = float(1.0 - sum(matriz[i, j] for i in range(6) for j in range(6) if i + j <= 2))
             p_btts = float(sum(matriz[i, j] for i in range(1, 6) for j in range(1, 6)))
 
-            marcador = obtener_marcador_modal(matriz, p_loc, p_emp, p_vis)
+            marcador = obtener_marcador_modal(matriz)
             rec = f"Gana {loc}" if p_loc > p_vis and p_loc > p_emp else (f"Gana {vis}" if p_vis > p_loc and p_vis > p_emp else "Empate")
 
             resultados.append({
@@ -276,8 +257,63 @@ if os.path.exists(EXCEL_PATH):
         max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
         df_pronosticos.insert(0, "🔥", ["🔥" if p >= 50.0 else "➖" for p in max_prob])
 
+        # ======================================================================
+        # ESTILOS VISUALES ORIGINALES
+        # ======================================================================
+        def resaltar_texto_porcentajes(row):
+            styles = [""] * len(row)
+            estilo_texto_verde = "color: #1e7e34; font-weight: bold;"
+
+            p_local, p_empate, p_visita = row["% Local"], row["% Empate"], row["% Visita"]
+            max_val = max(p_local, p_empate, p_visita)
+
+            if p_local == max_val:
+                styles[row.index.get_loc("% Local")] = estilo_texto_verde
+            elif p_empate == max_val:
+                styles[row.index.get_loc("% Empate")] = estilo_texto_verde
+            elif p_visita == max_val:
+                styles[row.index.get_loc("% Visita")] = estilo_texto_verde
+
+            if row["Más de 2.5 goles"] >= 50.0:
+                styles[row.index.get_loc("Más de 2.5 goles")] = estilo_texto_verde
+
+            if row["Ambos marcan: Sí"] >= 50.0:
+                styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_texto_verde
+
+            return styles
+
+        estilo_tabla = (
+            df_pronosticos.style.apply(resaltar_texto_porcentajes, axis=1)
+            .format("{:.1f}", subset=["% Local", "% Empate", "% Visita", "Más de 2.5 goles", "Ambos marcan: Sí"])
+            .set_properties(
+                **{
+                    "border-color": "#e0e2dc",
+                    "font-family": "sans-serif",
+                    "text-align": "center",
+                }
+            )
+            .set_table_styles(
+                [
+                    {
+                        "selector": "th",
+                        "props": [
+                            ("background-color", "#9ca592"),
+                            ("color", "#ffffff"),
+                            ("font-weight", "bold"),
+                            ("text-align", "center"),
+                            ("padding", "8px"),
+                        ],
+                    },
+                    {
+                        "selector": "tbody tr:hover",
+                        "props": [("background-color", "#f4f5f2 !important")],
+                    },
+                ]
+            )
+        )
+
         st.subheader("📋 Resumen de pronósticos")
-        st.dataframe(df_pronosticos, use_container_width=True, hide_index=True)
+        st.dataframe(estilo_tabla, use_container_width=True, hide_index=True)
 
     except Exception as e:
         st.error(f"Error al procesar el archivo Excel: {str(e)}")
