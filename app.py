@@ -318,19 +318,20 @@ def obtener_marcador_modal(m, p_loc, p_emp, p_vis):
 
 
 # ==============================================================================
-# 5. EJECUCIÓN DEL PANEL STREAMLIT
+# 5. EJECUCIÓN DEL PANEL STREAMLIT (CARGA AUTOMÁTICA DESDE GITHUB)
 # ==============================================================================
-st.sidebar.header("📂 Carga de Datos")
-archivo_excel = st.sidebar.file_uploader("Subir Excel Liga 1", type=["xlsx"])
 
-if archivo_excel:
+# Nombre exacto de tu archivo Excel subido en la raíz del repositorio de GitHub
+EXCEL_PATH = "Liga1_2026.xlsx"  # 👈 Cambia esto si tu archivo tiene otro nombre en GitHub
+
+if os.path.exists(EXCEL_PATH):
     try:
-        datos = cargar_excel(archivo_excel)
-        st.success("✅ Excel cargado y procesado con éxito.")
+        datos = cargar_excel(EXCEL_PATH)
 
         partidos_df = datos["partidos"]
         if "jornada" in partidos_df.columns:
             jornadas = sorted(partidos_df["jornada"].dropna().unique())
+            st.sidebar.header("⚽ Selección de Jornada")
             jornada_sel = st.sidebar.selectbox("Seleccionar Jornada", jornadas)
             partidos_fecha = partidos_df[partidos_df["jornada"] == jornada_sel].copy()
         else:
@@ -381,78 +382,78 @@ if archivo_excel:
                     "% Local": round(p_loc * 100, 1),
                     "% Empate": round(p_emp * 100, 1),
                     "% Visita": round(p_vis * 100, 1),
-                    "% +2.5": round(p_over25 * 100, 1),
-                    "% BTTS Sí": round(p_btts * 100, 1),
+                    "%>%2.5": round(p_over25 * 100, 1),
+                    "Ambos marcan: Sí": round(p_btts * 100, 1),
                     "Marcador_Modal": marcador,
                     "Recomendacion": rec,
                 }
             )
 
-# Convertir resultados a DataFrame
+        # Convertir resultados a DataFrame
         df_pronosticos = pd.DataFrame(resultados)
-        
-        # Renombrar columnas para mejor lectura visual
-        df_pronosticos = df_pronosticos.rename(columns={
-            '% +2.5': '%>2.5',
-            '% BTTS Sí': 'Ambos marcan: Sí'
-        })
-        
-        # 1. Agregar columna 🔥 a partidos calientes (>= 50%)
-        max_prob = df_pronosticos[['% Local', '% Empate', '% Visita']].max(axis=1)
-        df_pronosticos.insert(0, '🔥', ['🔥' if p >= 50.0 else '➖' for p in max_prob])
 
-        # 2. Función para resaltar en verde la probabilidad más alta y los indicadores clave (>=50%)
+        # 1. Agregar columna 🔥 a partidos calientes (>= 50%)
+        max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
+        df_pronosticos.insert(0, "🔥", ["🔥" if p >= 50.0 else "➖" for p in max_prob])
+
+        # 2. Función para resaltar indicadores
         def resaltar_indicadores(row):
-            styles = [''] * len(row)
-            estilo_verde = 'background-color: #d4edda; color: #155724; font-weight: bold;'
-            
-            # Resaltar la mayor probabilidad entre Local, Empate y Visita
-            p_local, p_empate, p_visita = row['% Local'], row['% Empate'], row['% Visita']
+            styles = [""] * len(row)
+            estilo_verde = "background-color: #d4edda; color: #155724; font-weight: bold;"
+
+            p_local, p_empate, p_visita = row["% Local"], row["% Empate"], row["% Visita"]
             max_val = max(p_local, p_empate, p_visita)
             if p_local == max_val:
-                styles[row.index.get_loc('% Local')] = estilo_verde
+                styles[row.index.get_loc("% Local")] = estilo_verde
             elif p_empate == max_val:
-                styles[row.index.get_loc('% Empate')] = estilo_verde
+                styles[row.index.get_loc("% Empate")] = estilo_verde
             elif p_visita == max_val:
-                styles[row.index.get_loc('% Visita')] = estilo_verde
-            
-            # Resaltar %>2.5 si es >= 50%
-            if row['%>2.5'] >= 50.0:
-                styles[row.index.get_loc('%>2.5')] = estilo_verde
-                
-            # Resaltar Ambos marcan: Sí si es >= 50%
-            if row['Ambos marcan: Sí'] >= 50.0:
-                styles[row.index.get_loc('Ambos marcan: Sí')] = estilo_verde
-                
+                styles[row.index.get_loc("% Visita")] = estilo_verde
+
+            if row["%>%2.5"] >= 50.0:
+                styles[row.index.get_loc("%>%2.5")] = estilo_verde
+
+            if row["Ambos marcan: Sí"] >= 50.0:
+                styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_verde
+
             return styles
 
         # 3. Estilizado visual corporativo Quipus Data
-        estilo_tabla = df_pronosticos.style\
-            .apply(resaltar_indicadores, axis=1)\
-            .format("{:.1f}", subset=['% Local', '% Empate', '% Visita', '%>2.5', 'Ambos marcan: Sí'])\
-            .set_properties(**{
-                'border-color': '#e0e2dc',
-                'font-family': 'sans-serif',
-                'text-align': 'center'
-            })\
-            .set_table_styles([
-                {'selector': 'th', 'props': [
-                    ('background-color', '#9ca592'),
-                    ('color', '#ffffff'),
-                    ('font-weight', 'bold'),
-                    ('text-align', 'center'),
-                    ('padding', '8px')
-                ]},
-                {'selector': 'tbody tr:hover', 'props': [
-                    ('background-color', '#f4f5f2 !important')
-                ]}
-            ])
+        estilo_tabla = (
+            df_pronosticos.style.apply(resaltar_indicadores, axis=1)
+            .format("{:.1f}", subset=["% Local", "% Empate", "% Visita", "%>%2.5", "Ambos marcan: Sí"])
+            .set_properties(
+                **{
+                    "border-color": "#e0e2dc",
+                    "font-family": "sans-serif",
+                    "text-align": "center",
+                }
+            )
+            .set_table_styles(
+                [
+                    {
+                        "selector": "th",
+                        "props": [
+                            ("background-color", "#9ca592"),
+                            ("color", "#ffffff"),
+                            ("font-weight", "bold"),
+                            ("text-align", "center"),
+                            ("padding", "8px"),
+                        ],
+                    },
+                    {
+                        "selector": "tbody tr:hover",
+                        "props": [("background-color", "#f4f5f2 !important")],
+                    },
+                ]
+            )
+        )
 
-        # 4. Renderizado en pantalla (ocultando el índice)
+        # 4. Renderizado en pantalla
         st.subheader("📋 Resumen de pronósticos")
         st.dataframe(estilo_tabla, use_container_width=True, hide_index=True)
-    
+
     except Exception as e:
-        st.error(f"Error al procesar el modelo: {str(e)}")
+        st.error(f"Error al procesar el archivo del repositorio: {str(e)}")
 else:
-    st.info("👈 Por favor, sube tu archivo Excel en la barra lateral para generar el panel.")
+    st.error(f"❌ No se encontró el archivo '{EXCEL_PATH}' en la raíz del repositorio de GitHub.")
