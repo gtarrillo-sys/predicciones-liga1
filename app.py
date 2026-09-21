@@ -472,7 +472,7 @@ if os.path.exists(EXCEL_PATH):
     ].copy()
 
 
-  def resaltar_texto_porcentajes(row):
+def resaltar_texto_porcentajes(row):
   styles = [""] * len(row)
   estilo_texto_verde = "color: #2e6930; font-weight: bold;"
   estilo_texto_rojo = (
