@@ -472,43 +472,57 @@ if os.path.exists(EXCEL_PATH):
     ].copy()
 
 
-    def resaltar_texto_porcentajes(row):
-      styles = [""] * len(row)
-      estilo_texto_verde = "color: #2e6930; font-weight: bold;"
+   def resaltar_texto_porcentajes(row):
+  styles = [""] * len(row)
+  estilo_texto_verde = "color: #2e6930; font-weight: bold;"
+  estilo_texto_rojo = (
+      "color: #c0392b; font-weight: bold;"  # Alerta de advertencia en rojo
+  )
 
-      p_local, p_empate, p_visita = (
-          row["% Local"],
-          row["% Empate"],
-          row["% Visita"],
-      )
-      max_val = max(p_local, p_empate, p_visita)
+  p_local, p_empate, p_visita = (
+      row["% Local"],
+      row["% Empate"],
+      row["% Visita"],
+  )
+  max_val = max(p_local, p_empate, p_visita)
 
-      if p_local == max_val and p_local >= 60.0:
-        styles[row.index.get_loc("% Local")] = estilo_texto_verde
-      elif p_empate == max_val and p_empate >= 60.0:
-        styles[row.index.get_loc("% Empate")] = estilo_texto_verde
-      elif p_visita == max_val and p_visita >= 60.0:
-        styles[row.index.get_loc("% Visita")] = estilo_texto_verde
+  # Si el partido es cerrado o empate técnico, pintamos de rojo el marcador y la recomendación
+  if row["Recomendacion"] == "Empate / Partido Cerrado":
+    styles[row.index.get_loc("Marcador_Modal")] = estilo_texto_rojo
+    styles[row.index.get_loc("Recomendacion")] = estilo_texto_rojo
+  else:
+    if p_local == max_val and p_local >= 60.0:
+      styles[row.index.get_loc("% Local")] = estilo_texto_verde
+    elif p_empate == max_val and p_empate >= 60.0:
+      styles[row.index.get_loc("% Empate")] = estilo_texto_verde
+    elif p_visita == max_val and p_visita >= 60.0:
+      styles[row.index.get_loc("% Visita")] = estilo_texto_verde
 
-      if row["Más de 2.5 goles"] >= 50.0:
-        styles[row.index.get_loc("Más de 2.5 goles")] = estilo_texto_verde
+    if row["Más de 2.5 goles"] >= 50.0:
+      styles[row.index.get_loc("Más de 2.5 goles")] = estilo_texto_verde
 
-      if row["Ambos marcan: Sí"] >= 50.0:
-        styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_texto_verde
+    if row["Ambos marcan: Sí"] >= 50.0:
+      styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_texto_verde
 
-      if max_val >= 70.0:
-        styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
+    if max_val >= 70.0:
+      styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
 
-      return styles
+  return styles
 
 
-    def resaltar_texto_resumen(row):
-      styles = [""] * len(row)
-      estilo_texto_verde = "color: #2e6930; font-weight: bold;"
-      if row["🔥"] == "🔥":
-        styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
-      return styles
+def resaltar_texto_resumen(row):
+  styles = [""] * len(row)
+  estilo_texto_verde = "color: #2e6930; font-weight: bold;"
+  estilo_texto_rojo = "color: #c0392b; font-weight: bold;"
 
+  # Alerta visual también en la vista resumida de móviles
+  if row["Recomendacion"] == "Empate / Partido Cerrado":
+    styles[row.index.get_loc("Marcador_Modal")] = estilo_texto_rojo
+    styles[row.index.get_loc("Recomendacion")] = estilo_texto_rojo
+  elif row["🔥"] == "🔥":
+    styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
+
+  return styles
 
     estilo_tabla_completa = df_pronosticos.style.apply(
         resaltar_texto_porcentajes, axis=1
