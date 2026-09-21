@@ -332,234 +332,261 @@ dias_espanol = {
     "Sunday": "Domingo",
 }
 
-if os.path.exists(EXCEL_PATH):
-  try:
-    datos = cargar_excel(EXCEL_PATH)
-    partidos_df = datos["partidos"]
-
-    col_local = buscar_columna(partidos_df, ["local", "equipo_local", "loc"])
-    col_visita = buscar_columna(
-        partidos_df, ["visita", "visitante", "equipo_visita", "vis"]
-    )
-    col_jornada = buscar_columna(partidos_df, ["jornada", "fecha_liga"])
-    col_fecha = buscar_columna(partidos_df, ["fecha", "date"])
-    col_hora = buscar_columna(partidos_df, ["hora", "time"])
-
-    if not col_local or not col_visita:
-      st.error("❌ No se pudieron identificar las columnas de equipos.")
-      st.stop()
-
-    # --- BARRA LATERAL ---
-    st.sidebar.header("⚽ Selección de Jornada")
-    if col_jornada:
-      jornadas = sorted(partidos_df[col_jornada].dropna().unique())
-      jornada_sel = st.sidebar.selectbox("Seleccionar Jornada", jornadas)
-      partidos_fecha = partidos_df[
-          partidos_df[col_jornada] == jornada_sel
-      ].copy()
-    else:
-      partidos_fecha = partidos_df.copy()
-
-    st.sidebar.markdown("---")
-    st.sidebar.header("📊 Selección de Resultado")
-    tipo_vista = st.sidebar.radio(
-        "Vista de la tabla", ["Vista Resumida", "Vista Completa"]
-    )
-    # ---------------------
-
-    resultados = []
-    for _, row in partidos_fecha.iterrows():
-      loc, vis = str(row[col_local]), str(row[col_visita])
-      fecha_p = (
-          row[col_fecha] if col_fecha and col_fecha in row else "Por definir"
-      )
-
-      nombre_dia = "Por definir"
-      if pd.notna(fecha_p) and str(fecha_p).strip() != "":
-        try:
-          dt_val = pd.to_datetime(fecha_p)
-          dia_ingles = dt_val.strftime("%A")
-          nombre_dia = dias_espanol.get(dia_ingles, "Por definir")
-        except Exception:
-          nombre_dia = "Por definir"
-
-      hora_raw = row[col_hora] if col_hora and col_hora in row else None
-      if pd.notna(hora_raw) and str(hora_raw).strip() != "":
-        if hasattr(hora_raw, "strftime"):
-          hora_str = hora_raw.strftime("%H:%M")
-        else:
-          hora_str = str(hora_raw)[:5]
-      else:
-        hora_str = "--:--"
-
-      gf_loc, ga_loc = calcular_tasas_equipo(datos, loc)
-      gf_vis, ga_vis = calcular_tasas_equipo(datos, vis)
-
-      tasa_rec_loc = calcular_tasa_ponderada(
-          datos["historia"], loc, es_local=True
-      )
-      tasa_rec_vis = calcular_tasa_ponderada(
-          datos["historia"], vis, es_local=False
-      )
-
-      f_loc, f_vis, rho_dc = obtener_factores_contextual(datos, loc, vis)
-      f_sit_loc, f_sit_vis = obtener_ajuste_situacional_completo(
-          loc, vis, hora_raw
-      )
-
-      l_loc = max(0.4, ((tasa_rec_loc + ga_vis) / 2.0) * f_loc * f_sit_loc)
-      m_vis = max(0.3, ((tasa_rec_vis + ga_loc) / 2.0) * f_vis * f_sit_vis)
-
-      matriz = matriz_dixon_coles(l_loc, m_vis, rho=rho_dc)
-
-      p_loc = float(np.sum(np.tril(matriz, -1)))
-      p_emp = float(np.sum(np.diag(matriz)))
-      p_vis = float(np.sum(np.triu(matriz, 1)))
-
-      p_over25 = float(
-          1.0
-          - sum(
-              matriz[i, j] for i in range(6) for j in range(6) if i + j <= 2
-          )
-      )
-      p_btts = float(
-          sum(matriz[i, j] for i in range(1, 6) for j in range(1, 6))
-      )
-
-      marcador, rec = obtener_marcador_y_recomendacion(
-          matriz,
-          p_loc * 100,
-          p_emp * 100,
-          p_vis * 100,
-          loc,
-          vis,
-          p_over25 * 100,
-          p_btts * 100,
-      )
-
-      fecha_limpia = (
-          str(fecha_p)[:10] if pd.notna(fecha_p) else "Por definir"
-      )
-      if "-" in fecha_limpia and len(fecha_limpia.split("-")[0]) == 4:
-        partes = fecha_limpia.split("-")
-        if len(partes) == 3:
-          fecha_limpia = f"{partes[2]}/{partes[1]}/{partes[0]}"
-
-      resultados.append({
-          "Día": nombre_dia,
-          "Fecha": fecha_limpia,
-          "Hora": hora_str,
-          "Local": loc,
-          "Visita": vis,
-          "% Local": round(p_loc * 100, 1),
-          "% Empate": round(p_emp * 100, 1),
-          "% Visita": round(p_vis * 100, 1),
-          "Más de 2.5 goles": round(p_over25 * 100, 1),
-          "Ambos marcan: Sí": round(p_btts * 100, 1),
-          "Marcador_Modal": marcador,
-          "Recomendacion": rec,
-      })
-
-    df_pronosticos = pd.DataFrame(resultados)
-
-    max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(axis=1)
-    df_pronosticos.insert(
-        0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob]
-    )
-
-    df_resumido = df_pronosticos[
-        ["🔥", "Día", "Hora", "Local", "Visita", "Marcador_Modal", "Recomendacion"]
-    ].copy()
-
 
 def resaltar_texto_porcentajes(row):
-  styles = [""] * len(row)
-  estilo_texto_verde = "color: #2e6930; font-weight: bold;"
-  estilo_texto_rojo = (
-      "color: #c0392b; font-weight: bold;"  # Alerta de advertencia en rojo
-  )
+    styles = [""] * len(row)
+    estilo_texto_verde = "color: #2e6930; font-weight: bold;"
+    estilo_texto_rojo = (
+        "color: #c0392b; font-weight: bold;"  # Alerta de advertencia en rojo
+    )
 
-  p_local, p_empate, p_visita = (
-      row["% Local"],
-      row["% Empate"],
-      row["% Visita"],
-  )
-  max_val = max(p_local, p_empate, p_visita)
+    p_local, p_empate, p_visita = (
+        row["% Local"],
+        row["% Empate"],
+        row["% Visita"],
+    )
+    max_val = max(p_local, p_empate, p_visita)
 
-  # Si el partido es cerrado o empate técnico, pintamos de rojo el marcador y la recomendación
-  if row["Recomendacion"] == "Empate / Partido Cerrado":
-    styles[row.index.get_loc("Marcador_Modal")] = estilo_texto_rojo
-    styles[row.index.get_loc("Recomendacion")] = estilo_texto_rojo
-  else:
-    if p_local == max_val and p_local >= 60.0:
-      styles[row.index.get_loc("% Local")] = estilo_texto_verde
-    elif p_empate == max_val and p_empate >= 60.0:
-      styles[row.index.get_loc("% Empate")] = estilo_texto_verde
-    elif p_visita == max_val and p_visita >= 60.0:
-      styles[row.index.get_loc("% Visita")] = estilo_texto_verde
+    # Si el partido es cerrado o empate técnico, pintamos de rojo el marcador y la recomendación
+    if row["Recomendacion"] == "Empate / Partido Cerrado":
+        styles[row.index.get_loc("Marcador_Modal")] = estilo_texto_rojo
+        styles[row.index.get_loc("Recomendacion")] = estilo_texto_rojo
+    else:
+        if p_local == max_val and p_local >= 60.0:
+            styles[row.index.get_loc("% Local")] = estilo_texto_verde
+        elif p_empate == max_val and p_empate >= 60.0:
+            styles[row.index.get_loc("% Empate")] = estilo_texto_verde
+        elif p_visita == max_val and p_visita >= 60.0:
+            styles[row.index.get_loc("% Visita")] = estilo_texto_verde
 
-    if row["Más de 2.5 goles"] >= 50.0:
-      styles[row.index.get_loc("Más de 2.5 goles")] = estilo_texto_verde
+        if row["Más de 2.5 goles"] >= 50.0:
+            styles[row.index.get_loc("Más de 2.5 goles")] = estilo_texto_verde
 
-    if row["Ambos marcan: Sí"] >= 50.0:
-      styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_texto_verde
+        if row["Ambos marcan: Sí"] >= 50.0:
+            styles[row.index.get_loc("Ambos marcan: Sí")] = estilo_texto_verde
 
-    if max_val >= 70.0:
-      styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
+        if max_val >= 70.0:
+            styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
 
-  return styles
+    return styles
 
 
 def resaltar_texto_resumen(row):
-  styles = [""] * len(row)
-  estilo_texto_verde = "color: #2e6930; font-weight: bold;"
-  estilo_texto_rojo = "color: #c0392b; font-weight: bold;"
+    styles = [""] * len(row)
+    estilo_texto_verde = "color: #2e6930; font-weight: bold;"
+    estilo_texto_rojo = "color: #c0392b; font-weight: bold;"
 
-  # Alerta visual también en la vista resumida de móviles
-  if row["Recomendacion"] == "Empate / Partido Cerrado":
-    styles[row.index.get_loc("Marcador_Modal")] = estilo_texto_rojo
-    styles[row.index.get_loc("Recomendacion")] = estilo_texto_rojo
-  elif row["🔥"] == "🔥":
-    styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
+    # Alerta visual también en la vista resumida de móviles
+    if row["Recomendacion"] == "Empate / Partido Cerrado":
+        styles[row.index.get_loc("Marcador_Modal")] = estilo_texto_rojo
+        styles[row.index.get_loc("Recomendacion")] = estilo_texto_rojo
+    elif row["🔥"] == "🔥":
+        styles[row.index.get_loc("Recomendacion")] = estilo_texto_verde
 
-  return styles
+    return styles
 
-    estilo_tabla_completa = df_pronosticos.style.apply(
-        resaltar_texto_porcentajes, axis=1
-    ).format(
-        "{:.1f}",
-        subset=[
-            "% Local",
-            "% Empate",
-            "% Visita",
-            "Más de 2.5 goles",
-            "Ambos marcan: Sí",
-        ],
-    )
 
-    estilo_tabla_resumida = df_resumido.style.apply(
-        resaltar_texto_resumen, axis=1
-    )
+if os.path.exists(EXCEL_PATH):
+    try:
+        datos = cargar_excel(EXCEL_PATH)
+        partidos_df = datos["partidos"]
 
-    st.subheader("📋 Resumen de pronósticos")
+        col_local = buscar_columna(partidos_df, ["local", "equipo_local", "loc"])
+        col_visita = buscar_columna(
+            partidos_df, ["visita", "visitante", "equipo_visita", "vis"]
+        )
+        col_jornada = buscar_columna(partidos_df, ["jornada", "fecha_liga"])
+        col_fecha = buscar_columna(partidos_df, ["fecha", "date"])
+        col_hora = buscar_columna(partidos_df, ["hora", "time"])
 
-    if tipo_vista == "Vista Resumida":
-      st.markdown(
-          "*Vista ligera optimizada con los días de la semana y datos clave"
-          " para móviles.*"
-      )
-      st.dataframe(
-          estilo_tabla_resumida, use_container_width=True, hide_index=True
-      )
-    else:
-      st.markdown(
-          "*Vista extendida con porcentajes completos de probabilidad y goles.*"
-      )
-      st.dataframe(
-          estilo_tabla_completa, use_container_width=True, hide_index=True
-      )
+        if not col_local or not col_visita:
+            st.error("❌ No se pudieron identificar las columnas de equipos.")
+            st.stop()
 
-  except Exception as e:
-    st.error(f"❌ Error al procesar el archivo Excel: {str(e)}")
+        # --- BARRA LATERAL ---
+        st.sidebar.header("⚽ Selección de Jornada")
+        if col_jornada:
+            jornadas = sorted(partidos_df[col_jornada].dropna().unique())
+            jornada_sel = st.sidebar.selectbox("Seleccionar Jornada", jornadas)
+            partidos_fecha = partidos_df[
+                partidos_df[col_jornada] == jornada_sel
+            ].copy()
+        else:
+            partidos_fecha = partidos_df.copy()
+
+        st.sidebar.markdown("---")
+        st.sidebar.header("📊 Selección de Resultado")
+        tipo_vista = st.sidebar.radio(
+            "Vista de la tabla", ["Vista Resumida", "Vista Completa"]
+        )
+        # ---------------------
+
+        resultados = []
+        for _, row in partidos_fecha.iterrows():
+            loc, vis = str(row[col_local]), str(row[col_visita])
+            fecha_p = (
+                row[col_fecha]
+                if col_fecha and col_fecha in row
+                else "Por definir"
+            )
+
+            nombre_dia = "Por definir"
+            if pd.notna(fecha_p) and str(fecha_p).strip() != "":
+                try:
+                    dt_val = pd.to_datetime(fecha_p)
+                    dia_ingles = dt_val.strftime("%A")
+                    nombre_dia = dias_espanol.get(dia_ingles, "Por definir")
+                except Exception:
+                    nombre_dia = "Por definir"
+
+            hora_raw = (
+                row[col_hora] if col_hora and col_hora in row else None
+            )
+            if pd.notna(hora_raw) and str(hora_raw).strip() != "":
+                if hasattr(hora_raw, "strftime"):
+                    hora_str = hora_raw.strftime("%H:%M")
+                else:
+                    hora_str = str(hora_raw)[:5]
+            else:
+                hora_str = "--:--"
+
+            gf_loc, ga_loc = calcular_tasas_equipo(datos, loc)
+            gf_vis, ga_vis = calcular_tasas_equipo(datos, vis)
+
+            tasa_rec_loc = calcular_tasa_ponderada(
+                datos["historia"], loc, es_local=True
+            )
+            tasa_rec_vis = calcular_tasa_ponderada(
+                datos["historia"], vis, es_local=False
+            )
+
+            f_loc, f_vis, rho_dc = obtener_factores_contextual(
+                datos, loc, vis
+            )
+            f_sit_loc, f_sit_vis = obtener_ajuste_situacional_completo(
+                loc, vis, hora_raw
+            )
+
+            l_loc = max(
+                0.4, ((tasa_rec_loc + ga_vis) / 2.0) * f_loc * f_sit_loc
+            )
+            m_vis = max(
+                0.3, ((tasa_rec_vis + ga_loc) / 2.0) * f_vis * f_sit_vis
+            )
+
+            matriz = matriz_dixon_coles(l_loc, m_vis, rho=rho_dc)
+
+            p_loc = float(np.sum(np.tril(matriz, -1)))
+            p_emp = float(np.sum(np.diag(matriz)))
+            p_vis = float(np.sum(np.triu(matriz, 1)))
+
+            p_over25 = float(
+                1.0
+                - sum(
+                    matriz[i, j]
+                    for i in range(6)
+                    for j in range(6)
+                    if i + j <= 2
+                )
+            )
+            p_btts = float(
+                sum(matriz[i, j] for i in range(1, 6) for j in range(1, 6))
+            )
+
+            marcador, rec = obtener_marcador_y_recomendacion(
+                matriz,
+                p_loc * 100,
+                p_emp * 100,
+                p_vis * 100,
+                loc,
+                vis,
+                p_over25 * 100,
+                p_btts * 100,
+            )
+
+            fecha_limpia = (
+                str(fecha_p)[:10] if pd.notna(fecha_p) else "Por definir"
+            )
+            if "-" in fecha_limpia and len(fecha_limpia.split("-")[0]) == 4:
+                partes = fecha_limpia.split("-")
+                if len(partes) == 3:
+                    fecha_limpia = f"{partes[2]}/{partes[1]}/{partes[0]}"
+
+            resultados.append({
+                "Día": nombre_dia,
+                "Fecha": fecha_limpia,
+                "Hora": hora_str,
+                "Local": loc,
+                "Visita": vis,
+                "% Local": round(p_loc * 100, 1),
+                "% Empate": round(p_emp * 100, 1),
+                "% Visita": round(p_vis * 100, 1),
+                "Más de 2.5 goles": round(p_over25 * 100, 1),
+                "Ambos marcan: Sí": round(p_btts * 100, 1),
+                "Marcador_Modal": marcador,
+                "Recomendacion": rec,
+            })
+
+        df_pronosticos = pd.DataFrame(resultados)
+
+        max_prob = df_pronosticos[["% Local", "% Empate", "% Visita"]].max(
+            axis=1
+        )
+        df_pronosticos.insert(
+            0, "🔥", ["🔥" if p >= 60.0 else "➖" for p in max_prob]
+        )
+
+        df_resumido = df_pronosticos[[
+            "🔥",
+            "Día",
+            "Hora",
+            "Local",
+            "Visita",
+            "Marcador_Modal",
+            "Recomendacion",
+        ]].copy()
+
+        estilo_tabla_completa = df_pronosticos.style.apply(
+            resaltar_texto_porcentajes, axis=1
+        ).format(
+            "{:.1f}",
+            subset=[
+                "% Local",
+                "% Empate",
+                "% Visita",
+                "Más de 2.5 goles",
+                "Ambos marcan: Sí",
+            ],
+        )
+
+        estilo_tabla_resumida = df_resumido.style.apply(
+            resaltar_texto_resumen, axis=1
+        )
+
+        st.subheader("📋 Resumen de pronósticos")
+
+        if tipo_vista == "Vista Resumida":
+            st.markdown(
+                "*Vista ligera optimizada con los días de la semana y datos clave"
+                " para móviles.*"
+            )
+            st.dataframe(
+                estilo_tabla_resumida,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.markdown(
+                "*Vista extendida con porcentajes completos de probabilidad y"
+                " goles.*"
+            )
+            st.dataframe(
+                estilo_tabla_completa,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    except Exception as e:
+        st.error(f"❌ Error al procesar el archivo Excel: {str(e)}")
 else:
-  st.error(f"❌ No se encontró el archivo '{EXCEL_PATH}'.")
+    st.error(f"❌ No se encontró el archivo '{EXCEL_PATH}'.")
