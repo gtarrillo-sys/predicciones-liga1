@@ -114,63 +114,71 @@ def calcular_tasa_ponderada(df_historial, equipo, es_local=True):
 def obtener_marcador_y_recomendacion(
     matriz, p_loc, p_emp, p_vis, loc, vis, p_over25, p_btts
 ):
-  if p_loc >= p_vis and p_loc >= p_emp:
-    ganador = "Local"
-    equipo_ganador = loc
-  elif p_vis > p_loc and p_vis >= p_emp:
-    ganador = "Visita"
-    equipo_ganador = vis
-  else:
-    ganador = "Empate"
-    equipo_ganador = "Empate"
+    # 1. Determinar el pronóstico base según probabilidades de la matriz
+    if p_loc >= p_vis and p_loc >= p_emp:
+        ganador = "Local"
+        equipo_ganador = loc
+        max_prob_val = p_loc
+    elif p_vis > p_loc and p_vis >= p_emp:
+        ganador = "Visita"
+        equipo_ganador = vis
+        max_prob_val = p_vis
+    else:
+        ganador = "Empate"
+        equipo_ganador = "Empate"
+        max_prob_val = p_emp
 
-  if ganador != "Empate":
-    rec = f"Gana {equipo_ganador}"
-    if p_over25 >= 50.0:
-      rec += " + Más de 2.5"
-    elif p_btts >= 50.0:
-      rec += " + Ambos marcan"
-  else:
-    rec = "Empate"
+    # 2. Lógica de recomendación coherente con umbrales estrictos
+    if ganador == "Empate" or max_prob_val < 42.0:
+        rec = "Empate / Partido Cerrado"
+    else:
+        rec = f"Gana {equipo_ganador}"
+        if p_over25 >= 52.0 and p_over25 >= p_btts:
+            rec += " + Más de 2.5"
+        elif p_btts >= 52.0:
+            rec += " + Ambos marcan"
 
-  max_p = -1.0
-  best_i, best_j = 1, 0
+    # 3. Búsqueda del marcador modal más coherente con la tendencia de goles
+    max_p = -1.0
+    best_i, best_j = 1, 0
 
-  for i in range(6):
-    for j in range(6):
-      es_valido = False
-      if ganador == "Local" and i > j:
-        es_valido = True
-      elif ganador == "Visita" and j > i:
-        es_valido = True
-      elif ganador == "Empate" and i == j:
-        es_valido = True
-
-      if es_valido:
-        es_over = i + j >= 3
-        if (p_over25 >= 50.0 and es_over) or (p_over25 < 50.0 and not es_over):
-          peso = matriz[i, j] * 1.5
-        else:
-          peso = matriz[i, j]
-
-        if peso > max_p:
-          max_p = peso
-          best_i, best_j = i, j
-
-  if max_p == -1.0:
     for i in range(6):
-      for j in range(6):
-        if ganador == "Local" and i > j and matriz[i, j] > max_p:
-          max_p = matriz[i, j]
-          best_i, best_j = i, j
-        elif ganador == "Visita" and j > i and matriz[i, j] > max_p:
-          max_p = matriz[i, j]
-          best_i, best_j = i, j
-        elif ganador == "Empate" and i == j and matriz[i, j] > max_p:
-          max_p = matriz[i, j]
-          best_i, best_j = i, j
+        for j in range(6):
+            es_valido = False
+            if ganador == "Local" and i > j:
+                es_valido = True
+            elif ganador == "Visita" and j > i:
+                es_valido = True
+            elif ganador == "Empate" and i == j:
+                es_valido = True
+            elif max_prob_val < 42.0:
+                es_valido = True
 
-  return f"{best_i} - {best_j}", rec
+            if es_valido:
+                es_over = i + j >= 3
+                if (p_over25 >= 50.0 and es_over) or (p_over25 < 50.0 and not es_over):
+                    peso = matriz[i, j] * 1.5
+                else:
+                    peso = matriz[i, j]
+
+                if peso > max_p:
+                    max_p = peso
+                    best_i, best_j = i, j
+
+    if max_p == -1.0:
+        for i in range(6):
+            for j in range(6):
+                if ganador == "Local" and i > j and matriz[i, j] > max_p:
+                    max_p = matriz[i, j]
+                    best_i, best_j = i, j
+                elif ganador == "Visita" and j > i and matriz[i, j] > max_p:
+                    max_p = matriz[i, j]
+                    best_i, best_j = i, j
+                elif ganador == "Empate" and i == j and matriz[i, j] > max_p:
+                    max_p = matriz[i, j]
+                    best_i, best_j = i, j
+
+    return f"{best_i} - {best_j}", rec
 
 
 # ==============================================================================
