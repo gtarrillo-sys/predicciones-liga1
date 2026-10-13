@@ -5,7 +5,7 @@ Requisitos:
     pip install streamlit pandas numpy scipy openpyxl
 Ejecución:
     streamlit run app_liga1.py
-Coloque Liga1_2026(2).xlsx en la misma carpeta o cargue el Excel desde la aplicación.
+Coloque Liga1_2026.xlsx en la misma carpeta o cargue el Excel desde la aplicación.
 """
 
 import base64
@@ -198,7 +198,6 @@ def cargar_excel_completo(bytes_excel):
     datos = {k: normalizar_columnas(v) for k, v in originales.items() if k != "Formulas"}
     datos["formulas_original"] = originales["Formulas"]
 
-    # Normalizar campos de xG en las dos hojas de resultados.
     for key in ("Resultados_Apertura", "Resultados_Clausura"):
         df = datos[key].copy()
         for c in ("xg_local", "xg_visita", "prom_gf_local", "prom_gc_local",
@@ -209,8 +208,6 @@ def cargar_excel_completo(bytes_excel):
                 )
         datos[key] = df
 
-    # Extraer valores de referencia desde Formulas, buscando etiquetas en lugar
-    # de depender exclusivamente de posiciones rígidas.
     formulas = originales["Formulas"]
     prior_local, prior_visita = 1.45, 1.20
     if not formulas.empty and formulas.shape[1] >= 4:
@@ -224,7 +221,7 @@ def cargar_excel_completo(bytes_excel):
                 prior_local = valor
             elif "mgoles visita" in etiqueta or "goles visita" in etiqueta:
                 prior_visita = valor
-        # Compatibilidad con el formato original de la hoja Formulas.
+
         if prior_local == 1.45 and len(formulas) > 0:
             v = a_float(formulas.iloc[0, 3])
             if np.isfinite(v):
@@ -274,7 +271,7 @@ if partidos.empty or not {"local", "visita"}.issubset(partidos.columns):
     st.stop()
 
 # ---------------------------------------------------------------------------
-# 3. Construcción de una base histórica común y rendimiento por equipo
+# 3. Construcción de base histórica común y rendimiento
 # ---------------------------------------------------------------------------
 
 def construir_historico(datos):
@@ -286,7 +283,6 @@ def construir_historico(datos):
             continue
         df["fuente"] = hoja
         df["peso_base"] = peso
-        # La jornada es el orden cronológico disponible si no hay fecha.
         if "jornada" not in df.columns:
             df["jornada"] = np.arange(1, len(df) + 1)
         df["jornada_num"] = pd.to_numeric(
@@ -333,15 +329,11 @@ def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
             "n": 0, "forma": 0.5
         }
 
-    # Si existe fecha en la hoja de partidos, solo se usan datos anteriores
-    # cuando el histórico también tiene una fecha real utilizable.
     if fecha_partido is not None and pd.notna(fecha_partido) and "fecha" in h.columns:
         fechas = pd.to_datetime(h["fecha"], errors="coerce")
         if fechas.notna().any():
             h = h[fechas.isna() | (fechas < pd.Timestamp(fecha_partido))]
 
-    # Como las hojas de resultados no tienen fecha, se filtra por jornada
-    # dentro de la competición correspondiente si el campo puede compararse.
     if jornada_partido is not None and pd.notna(jornada_partido):
         try:
             jn = int(jornada_partido)
@@ -358,14 +350,11 @@ def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
         return {"gf": gf, "ga": ga, "gf_local": gf, "ga_local": ga,
                 "gf_visita": ga, "ga_visita": gf, "n": 0, "forma": 0.5}
 
-    # Tasas generales mezclan goles (60%) y xG (40%).
     gf_l = (0.60 * loc["gl"] + 0.40 * loc["xg_local"]).tolist()
     ga_l = (0.60 * loc["gv"] + 0.40 * loc["xg_visita"]).tolist()
     gf_v = (0.60 * vis["gv"] + 0.40 * vis["xg_visita"]).tolist()
     ga_v = (0.60 * vis["gl"] + 0.40 * vis["xg_local"]).tolist()
 
-    # El Clausura tiene más peso. Las últimas cinco filas de cada equipo
-    # en Clausura reciben un peso adicional moderado.
     def promedio_ponderado(valores, filas):
         if not valores:
             return np.nan
@@ -383,7 +372,6 @@ def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
     gf_visita = promedio_ponderado(gf_v, vis)
     ga_visita = promedio_ponderado(ga_v, vis)
 
-    # Las tablas aportan indicadores de rendimiento de la temporada.
     fila_ac = fila_equipo_tabla(tabla_acumulada, equipo)
     fila_cl = fila_equipo_tabla(tabla_clausura, equipo)
     ajustes_gf, ajustes_ga = [], []
@@ -413,7 +401,6 @@ def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
         tabla_ga = np.average([x[0] for x in ajustes_ga], weights=[x[1] for x in ajustes_ga])
         ga_hist = 0.75 * ga_hist + 0.25 * tabla_ga
 
-    # Forma reciente aproximada a partir de los últimos cinco partidos.
     recientes = pd.concat([loc.assign(gf=loc["gl"], ga=loc["gv"]),
                            vis.assign(gf=vis["gv"], ga=vis["gl"])], ignore_index=True)
     recientes = recientes.tail(5)
@@ -435,7 +422,7 @@ def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
     }
 
 # ---------------------------------------------------------------------------
-# 4. Factores de contexto: descanso, altitud, clima, cancha, tablas y H2H
+# 4. Factores contextuales
 # ---------------------------------------------------------------------------
 
 def obtener_contexto(datos, partido):
@@ -443,7 +430,6 @@ def obtener_contexto(datos, partido):
     eq_loc, eq_vis = normalizar_nombre(loc), normalizar_nombre(vis)
     f_loc, f_vis, rho = 1.0, 1.0, -0.08
 
-    # Geografía: usa datos de Data_Geografica y, si faltan, los del partido.
     geo = datos["Data_Geografica"]
     info_l = geo[geo.get("equipo_std", pd.Series(dtype=str)) == eq_loc] if not geo.empty and "equipo_std" in geo.columns else pd.DataFrame()
     info_v = geo[geo.get("equipo_std", pd.Series(dtype=str)) == eq_vis] if not geo.empty and "equipo_std" in geo.columns else pd.DataFrame()
@@ -471,7 +457,7 @@ def obtener_contexto(datos, partido):
     if "calor" in clima_l and "calor" not in clima_v:
         f_loc *= 1.03
         f_vis *= 0.96
-    if "sintetic" in cancha_l or "sintétic" in cancha_l:
+    if "sintetic" in cancha_l or "sintetic" in cancha_l:
         f_loc *= 1.02
         f_vis *= 0.98
 
@@ -482,7 +468,6 @@ def obtener_contexto(datos, partido):
     if descanso_v < 4:
         f_vis *= 0.94
 
-    # Ajuste horario moderado.
     hora = parsear_hora(partido.get("hora"))
     try:
         hora_num = int(hora.split(":")[0])
@@ -492,23 +477,21 @@ def obtener_contexto(datos, partido):
     except Exception:
         pass
 
-    # Presión de la tabla acumulada: clasificación, título o descenso.
     ac = fila_equipo_tabla(tabla_acumulada, loc)
     av = fila_equipo_tabla(tabla_acumulada, vis)
     if ac is not None:
         sit = str(ac.get("situacion_actual", "")).lower()
-        if any(k in sit for k in ("libertadores", "sudamericana", "titulo", "título")):
+        if any(k in sit for k in ("libertadores", "sudamericana", "titulo", "titulo")):
             f_loc *= 1.035
         elif any(k in sit for k in ("descenso", "peligro", "riesgo")):
             f_loc *= 1.04
     if av is not None:
         sit = str(av.get("situacion_actual", "")).lower()
-        if any(k in sit for k in ("libertadores", "sudamericana", "titulo", "título")):
+        if any(k in sit for k in ("libertadores", "sudamericana", "titulo", "titulo")):
             f_vis *= 1.025
         elif any(k in sit for k in ("descenso", "peligro", "riesgo")):
             f_vis *= 1.025
 
-    # H2H reciente: solo una señal pequeña, no un peso dominante.
     h2h = datos["Historial_H2H"]
     if not h2h.empty and {"local_std", "visita_std"}.issubset(h2h.columns):
         h = h2h[
@@ -539,7 +522,7 @@ def obtener_contexto(datos, partido):
     }
 
 # ---------------------------------------------------------------------------
-# 5. Poisson / Dixon-Coles, probabilidades y marcador modal
+# 5. Poisson / Dixon-Coles y pronósticos
 # ---------------------------------------------------------------------------
 
 def matriz_dixon_coles(lambda_loc, lambda_vis, rho=-0.08, max_goles=8):
@@ -568,11 +551,9 @@ def pronosticar_partido(datos, partido):
     mvis = metricas_equipo(datos, vis, fecha, jornada_num)
     f_loc, f_vis, rho, contexto = obtener_contexto(datos, partido)
 
-    # Promedio ataque local + defensa visitante y viceversa.
     lambda_loc = ((mloc["gf_local"] + mvis["ga_visita"]) / 2.0) * f_loc
     lambda_vis = ((mvis["gf_visita"] + mloc["ga_local"]) / 2.0) * f_vis
 
-    # Regularización ligera hacia los promedios globales del libro Formulas.
     prior_l, prior_v = datos["prior_local"], datos["prior_visita"]
     lambda_loc = 0.88 * lambda_loc + 0.12 * prior_l
     lambda_vis = 0.88 * lambda_vis + 0.12 * prior_v
@@ -588,29 +569,28 @@ def pronosticar_partido(datos, partido):
     p_under25 = 100 - p_over25
     p_btts = float(matriz[1:, 1:].sum() * 100)
 
-    # Marcador modal global: el marcador exacto más probable.
     i_modal, j_modal = np.unravel_index(
-    np.argmax(matriz), matriz.shape
+        np.argmax(matriz), matriz.shape
     )
 
-    # Marcador más probable condicionado al pronóstico 1X2.
+    probabilidades_1x2 = {"Local": p_local, "Empate": p_empate, "Visita": p_visita}
+
+    # Marcador más probable condicionado al pronóstico 1X2 (CORREGIDO)
     if p_local >= p_empate and p_local >= p_visita:
-    mascara = np.tril(matriz, -1)
+        mascara = np.tril(matriz, -1)
     elif p_visita >= p_empate and p_visita >= p_local:
-    mascara = np.triu(matriz, 1)
+        mascara = np.triu(matriz, 1)
     else:
-    mascara = np.diag(np.diag(matriz))
+        mascara = np.diag(np.diag(matriz))
 
     i_pron, j_pron = np.unravel_index(
-    np.argmax(mascara), mascara.shape
+        np.argmax(mascara), mascara.shape
     )
     ganador = max(probabilidades_1x2, key=probabilidades_1x2.get)
     prob_ganador = probabilidades_1x2[ganador]
     orden_probs = sorted(probabilidades_1x2.values(), reverse=True)
     margen = orden_probs[0] - orden_probs[1]
 
-    # Semáforo de confianza:
-    # Verde = selección fuerte; rojo = partido cerrado; amarillo = intermedio.
     if prob_ganador >= 60 and margen >= 12:
         estado_pronostico = "FIJA"
         senal = "🟢"
@@ -792,9 +772,3 @@ with tab5:
         df = datos.get(hoja, pd.DataFrame())
         with st.expander(hoja):
             st.write(list(df.columns))
-    st.caption(
-        "Nota metodológica: Resultados_Apertura y Resultados_Clausura no incluyen una fecha "
-        "real por partido en este libro, sino una jornada. Por ello, el filtro temporal exacto "
-        "entre torneos no puede reconstruirse con total certeza solo con esas columnas. "
-        "Para backtesting estricto, agregue una fecha real a cada partido histórico."
-    )
