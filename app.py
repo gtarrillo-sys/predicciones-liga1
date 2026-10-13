@@ -142,13 +142,12 @@ def cargar_excel_completo(fuente):
     geo = estandarizar_columnas(pd.read_excel(xls, sheet_name="Data_Geografica")) if "Data_Geografica" in hojas else pd.DataFrame()
     formulas = pd.read_excel(xls, sheet_name="Formulas") if "Formulas" in hojas else pd.DataFrame()
 
-    # Tratamiento de xG (Expected Goals)
+    # Tratamiento de xG
     for df_xg in [apertura, clausura]:
         if "xg_local" in df_xg.columns and "xg_visita" in df_xg.columns:
             df_xg["xg_local_clean"] = df_xg["xg_local"].astype(str).str.replace(",", ".").astype(float)
             df_xg["xg_visita_clean"] = df_xg["xg_visita"].astype(str).str.replace(",", ".").astype(float)
 
-    # Medias de liga cargadas dinámicamente desde Formulas
     prior_gf, prior_ga = 1.3, 1.1
     if not formulas.empty:
         try:
@@ -233,7 +232,7 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
         except Exception:
             pass
 
-    # 2. MOTOR DE PRESIÓN SITUACIONAL (Últimas 5 fechas de torneo)
+    # 2. MOTOR DE PRESIÓN SITUACIONAL (Últimas 5 fechas)
     if not acumulada.empty and "equipo_std" in acumulada.columns:
         row_loc_acc = acumulada[acumulada["equipo_std"] == eq_loc]
         row_vis_acc = acumulada[acumulada["equipo_std"] == eq_vis]
@@ -260,7 +259,7 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
             elif "zona media" in sit_vis:
                 f_vis *= 0.90
 
-    # 3. Detección H2H (Clásicos)
+    # 3. Detección H2H
     if not h2h.empty:
         grandes = ["alianza lima", "universitario", "sporting cristal"]
         if eq_loc in grandes and eq_vis in grandes:
@@ -268,7 +267,8 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
             f_vis *= 0.95
             rho_ajustado = -0.15
 
-    return f_loc, max(0.4, f_vis), rho_ajustado
+    # Retorno estrictamente garantizado de 3 valores
+    return float(f_loc), max(0.4, float(f_vis)), float(rho_ajustado)
 
 def calcular_tasas_equipo(datos, equipo, antes_de=None):
     eq = normalizar_nombre(equipo)
@@ -297,7 +297,7 @@ def calcular_tasas_equipo(datos, equipo, antes_de=None):
     else:
         m_gf_ap, m_ga_ap = prior_gf, prior_ga
 
-    # Clausura (Últimos 5 partidos con xG)
+    # Clausura (Últimos 5 partidos)
     if antes_de is not None and pd.notna(antes_de) and "fecha" in cl.columns:
         cl = cl[cl["fecha"].isna() | (cl["fecha"] < antes_de)]
 
@@ -352,7 +352,6 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
     else:
         ganador, eq_ganador, max_p = "Empate", "Empate", p_emp
 
-    # 1. Definir recomendación
     if ganador == "Empate" or max_p < 42.0:
         rec = "Empate / Partido Cerrado"
     else:
@@ -362,9 +361,7 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
         elif p_btts >= 52.0:
             rec += " + Ambos marcan"
 
-    # 2. Forzar coherencia absoluta con el marcador modal
     if rec == "Empate / Partido Cerrado":
-        # Debe ser un empate estricto (0-0 o 1-1)
         best_i, best_j = (1, 1) if p_btts >= 48.0 else (0, 0)
     else:
         necesita_btts = "Ambos marcan" in rec
@@ -386,7 +383,7 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
     return f"{best_i} - {best_j}", rec
 
 # ==============================================================================
-# 4. INTERFAZ STREAMLIT Y ESTILOS UNIFICADOS
+# 4. INTERFAZ Y RENDERIZADO
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 dias_espanol = {"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles", "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo"}
@@ -396,14 +393,12 @@ def aplicar_estilos_tabla(row):
     estilo_verde = "color: #2e6930; font-weight: bold;"
     estilo_rojo = "color: #c0392b; font-weight: bold;"
 
-    # 1. Coloreado de la recomendación y marcador
     if row["Recomendacion"] == "Empate / Partido Cerrado":
         styles[row.index.get_loc("Marcador_Modal")] = estilo_rojo
         styles[row.index.get_loc("Recomendacion")] = estilo_rojo
     else:
         styles[row.index.get_loc("Recomendacion")] = estilo_verde
 
-    # 2. Coloreado de porcentajes relevantes en la vista completa
     for col in ["% Local", "% Empate", "% Visita", "Más de 2.5 goles", "Ambos marcan: Sí"]:
         if col in row.index and isinstance(row[col], (int, float)) and row[col] >= 55.0:
             styles[row.index.get_loc(col)] = estilo_verde
@@ -444,6 +439,7 @@ if os.path.exists(EXCEL_PATH):
             gf_loc, ga_loc = calcular_tasas_equipo(datos, loc, antes_de=fecha_p)
             gf_vis, ga_vis = calcular_tasas_equipo(datos, vis, antes_de=fecha_p)
 
+            # Desempaque seguro de 3 valores
             f_loc, f_vis, rho_dc = obtener_factores_contextual_y_situacional(datos, loc, vis, row)
 
             l_loc = max(0.4, ((gf_loc + ga_vis) / 2.0) * f_loc)
@@ -490,7 +486,6 @@ if os.path.exists(EXCEL_PATH):
                 st.dataframe(df_resumido.style.apply(aplicar_estilos_tabla, axis=1), use_container_width=True, hide_index=True)
             else:
                 st.markdown("*Vista extendida con porcentajes completos de probabilidad y goles.*")
-                # Formato exacto de 1 decimal (.1f) para evitar ceros innecesarios (46.000000 -> 46.0%)
                 st.dataframe(
                     df_pronosticos.style.apply(aplicar_estilos_tabla, axis=1).format("{:.1f}", subset=["% Local", "% Empate", "% Visita", "Más de 2.5 goles", "Ambos marcan: Sí"]),
                     use_container_width=True,
