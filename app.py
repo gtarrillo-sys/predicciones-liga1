@@ -6,7 +6,7 @@ from scipy.stats import poisson
 import streamlit as st
 
 # ==============================================================================
-# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS CSS UNIFICADOS
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS
 # ==============================================================================
 st.set_page_config(
     page_title="Modelo de Predicción Liga 1 Perú - Quipus Data",
@@ -25,7 +25,7 @@ st.markdown(
         word-break: break-word !important;
     }
     th {
-        background-color: #7b8870 !important; /* Verde corporativo Quipus Data */
+        background-color: #7b8870 !important;
         color: white !important;
         font-weight: bold;
     }
@@ -34,6 +34,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Encabezado visual corporativo
 LOGO_PATH = "logo_quipus.png"
 if os.path.exists(LOGO_PATH):
     with open(LOGO_PATH, "rb") as f:
@@ -52,12 +53,13 @@ else:
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
 # ==============================================================================
-# 2. CARGA Y LECTURA COMPLETA DE TODAS LAS HOJAS DEL EXCEL
+# 2. FUNCIONES DE NORMALIZACIÓN Y CARGA INTEGRAL DEL EXCEL
 # ==============================================================================
-def normalizar(nombre):
+def normalizar_nombre(nombre):
     if not isinstance(nombre, str):
         return ""
     import unicodedata
+
     n = nombre.strip().lower()
     n = unicodedata.normalize("NFD", n).encode("ascii", "ignore").decode("utf-8")
     mapeo = {
@@ -92,73 +94,99 @@ def normalizar(nombre):
     }
     return mapeo.get(n, n)
 
-def estandarizar(df):
+def estandarizar_columnas(df):
     df.columns = [
-        str(c).strip().lower().replace(" ", "_").replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+        str(c)
+        .strip()
+        .lower()
+        .replace(" ", "_")
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
         for c in df.columns
     ]
     renombres = {
-        "equipo_local": "local", "equipo_visitante": "visita", "visitante": "visita",
-        "goles_local": "gl", "goles_visitante": "gv", "goles_visita": "gv", "club": "equipo"
+        "equipo_local": "local",
+        "equipo_visitante": "visita",
+        "visitante": "visita",
+        "goles_local": "gl",
+        "goles_visitante": "gv",
+        "goles_visita": "gv",
+        "club": "equipo",
     }
     df = df.rename(columns=renombres)
+
     if "local" in df.columns:
-        df["local_std"] = df["local"].apply(normalizar)
+        df["local_std"] = df["local"].apply(normalizar_nombre)
     if "visita" in df.columns:
-        df["visita_std"] = df["visita"].apply(normalizar)
+        df["visita_std"] = df["visita"].apply(normalizar_nombre)
     if "equipo" in df.columns:
-        df["equipo_std"] = df["equipo"].apply(normalizar)
+        df["equipo_std"] = df["equipo"].apply(normalizar_nombre)
     if "fecha" in df.columns:
         df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
     return df
 
 @st.cache_data
-def cargar_excel_definitivo(filepath):
-    xls = pd.ExcelFile(filepath)
+def cargar_excel_completo(fuente):
+    xls = pd.ExcelFile(fuente)
     hojas = xls.sheet_names
 
-    partidos = estandarizar(pd.read_excel(xls, "Partidos_Fecha")) if "Partidos_Fecha" in hojas else pd.DataFrame()
-    apertura = estandarizar(pd.read_excel(xls, "Resultados_Apertura")) if "Resultados_Apertura" in hojas else pd.DataFrame()
-    clausura = estandarizar(pd.read_excel(xls, "Resultados_Clausura")) if "Resultados_Clausura" in hojas else pd.DataFrame()
-    acumulada = estandarizar(pd.read_excel(xls, "Tabla_Acumulada")) if "Tabla_Acumulada" in hojas else pd.DataFrame()
-    tabla_clausura = estandarizar(pd.read_excel(xls, "Tabla_Clausura")) if "Tabla_Clausura" in hojas else pd.DataFrame()
-    h2h = estandarizar(pd.read_excel(xls, "Historial_H2H")) if "Historial_H2H" in hojas else pd.DataFrame()
-    geo = estandarizar(pd.read_excel(xls, "Data_Geografica")) if "Data_Geografica" in hojas else pd.DataFrame()
-    formulas = pd.read_excel(xls, "Formulas") if "Formulas" in hojas else pd.DataFrame()
+    partidos = estandarizar_columnas(pd.read_excel(xls, sheet_name="Partidos_Fecha")) if "Partidos_Fecha" in hojas else pd.DataFrame()
+    apertura = estandarizar_columnas(pd.read_excel(xls, sheet_name="Resultados_Apertura")) if "Resultados_Apertura" in hojas else pd.DataFrame()
+    clausura = estandarizar_columnas(pd.read_excel(xls, sheet_name="Resultados_Clausura")) if "Resultados_Clausura" in hojas else pd.DataFrame()
+    acumulada = estandarizar_columnas(pd.read_excel(xls, sheet_name="Tabla_Acumulada")) if "Tabla_Acumulada" in hojas else pd.DataFrame()
+    tabla_clausura = estandarizar_columnas(pd.read_excel(xls, sheet_name="Tabla_Clausura")) if "Tabla_Clausura" in hojas else pd.DataFrame()
+    h2h = estandarizar_columnas(pd.read_excel(xls, sheet_name="Historial_H2H")) if "Historial_H2H" in hojas else pd.DataFrame()
+    geo = estandarizar_columnas(pd.read_excel(xls, sheet_name="Data_Geografica")) if "Data_Geografica" in hojas else pd.DataFrame()
+    formulas = pd.read_excel(xls, sheet_name="Formulas") if "Formulas" in hojas else pd.DataFrame()
 
+    # Limpieza de xG
     for df_xg in [apertura, clausura]:
         if "xg_local" in df_xg.columns and "xg_visita" in df_xg.columns:
             df_xg["xg_local_clean"] = df_xg["xg_local"].astype(str).str.replace(",", ".").astype(float)
             df_xg["xg_visita_clean"] = df_xg["xg_visita"].astype(str).str.replace(",", ".").astype(float)
 
-    prior_gf, prior_ga = 1.6824, 1.0815
+    # Extraer medias globales de liga desde hoja Formulas
+    prior_gf, prior_ga = 1.3, 1.1
     if not formulas.empty:
         try:
-            prior_gf = float(formulas.iloc[0, 3])
-            prior_ga = float(formulas.iloc[4, 3])
+            val_loc = formulas.iloc[0, 3]
+            val_vis = formulas.iloc[4, 3]
+            if pd.notna(val_loc) and pd.notna(val_vis):
+                prior_gf = float(val_loc)
+                prior_ga = float(val_vis)
         except Exception:
             pass
 
     return {
-        "partidos": partidos, "apertura": apertura, "clausura": clausura,
-        "acumulada": acumulada, "tabla_clausura": tabla_clausura,
-        "geo": geo, "h2h": h2h, "prior_gf": prior_gf, "prior_ga": prior_ga
+        "partidos": partidos,
+        "apertura": apertura,
+        "clausura": clausura,
+        "acumulada": acumulada,
+        "tabla_clausura": tabla_clausura,
+        "geo": geo,
+        "h2h": h2h,
+        "prior_gf": prior_gf,
+        "prior_ga": prior_ga,
     }
 
 # ==============================================================================
-# 3. MOTOR DE PRESIÓN SITUACIONAL Y DIXON-COLES
+# 3. MOTORES DE CÁLCULO: CONTEXTO, PRESIÓN SITUACIONAL Y DIXON-COLES
 # ==============================================================================
-def obtener_factores_contextuales(datos, local, visita, row_partido):
+def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido):
     geo = datos.get("geo", pd.DataFrame())
     h2h = datos.get("h2h", pd.DataFrame())
     acumulada = datos.get("acumulada", pd.DataFrame())
 
-    eq_loc = normalizar(local)
-    eq_vis = normalizar(visita)
+    eq_loc = normalizar_nombre(local)
+    eq_vis = normalizar_nombre(visita)
 
-    mult_loc, mult_vis, rho = 1.15, 0.88, -0.08
+    f_loc, f_vis = 1.15, 0.88
+    rho_ajustado = -0.08
 
-    # A) Datos Geográficos (Data_Geografica)
+    # 1. Factores Geográficos (Data_Geografica + Partidos_Fecha)
     if not geo.empty and "equipo_std" in geo.columns:
         info_loc = geo[geo["equipo_std"] == eq_loc]
         info_vis = geo[geo["equipo_std"] == eq_vis]
@@ -173,86 +201,86 @@ def obtener_factores_contextuales(datos, local, visita, row_partido):
 
             delta_alt = float(row_partido.get("delta_altitud_msnm", alt_loc - alt_vis))
             if delta_alt > 2000:
-                mult_loc *= 1.20
-                mult_vis *= 0.75
+                f_loc *= 1.20
+                f_vis *= 0.75
             elif delta_alt > 1200:
-                mult_loc *= 1.10
-                mult_vis *= 0.85
+                f_loc *= 1.10
+                f_vis *= 0.85
 
             if "calor" in clima_loc and "calor" not in clima_vis:
-                mult_loc *= 1.08
-                mult_vis *= 0.88
+                f_loc *= 1.08
+                f_vis *= 0.88
 
             if "sintetic" in cancha_loc and "sintetic" not in cancha_vis:
-                mult_vis *= 0.90
+                f_vis *= 0.90
 
-    # B) Días de Descanso y Horarios (Partidos_Fecha)
+    # Días de descanso (Partidos_Fecha)
     desc_loc = float(row_partido.get("dias_descanso_local", 7))
     desc_vis = float(row_partido.get("dias_descanso_visita", 7))
     if desc_loc < 4:
-        mult_loc *= 0.93
+        f_loc *= 0.93
     if desc_vis < 4:
-        mult_vis *= 0.92
+        f_vis *= 0.92
 
+    # Ajuste por Horario
     hora_val = row_partido.get("hora", None)
     if pd.notna(hora_val):
         try:
             h_int = int(str(hora_val).split(":")[0]) if ":" in str(hora_val) else getattr(hora_val, "hour", 15)
-            if h_int in [11, 12, 13] and mult_loc > 1.1:
-                mult_loc *= 1.06
-                mult_vis *= 0.92
+            if h_int in [11, 12, 13] and f_loc > 1.1:
+                f_loc *= 1.06
+                f_vis *= 0.92
         except Exception:
             pass
 
-    # C) Motor de Presión Situacional (Tabla_Acumulada - Últimas 5 Fechas)
+    # 2. MOTOR DE PRESIÓN SITUACIONAL DE FINAL DE TEMPORADA (Últimas 5 fechas)
     if not acumulada.empty and "equipo_std" in acumulada.columns:
-        row_loc_acc = acumulada[acumulada["equipo_std"] == eq_loc]
-        row_vis_acc = acumulada[acumulada["equipo_std"] == eq_vis]
-
-        pj_loc = float(row_loc_acc.iloc[0].get("pj", 28)) if not row_loc_acc.empty else 28
+        pj_loc = float(acumulada[acumulada["equipo_std"] == eq_loc].iloc[0].get("pj", 28)) if not acumulada[acumulada["equipo_std"] == eq_loc].empty else 28
+        
+        # Evaluamos si estamos en el tramo final (PJ >= 28 de 34)
         if pj_loc >= 28:
-            sit_loc = str(row_loc_acc.iloc[0].get("situacion_actual", "")).lower() if not row_loc_acc.empty else ""
-            sit_vis = str(row_vis_acc.iloc[0].get("situacion_actual", "")).lower() if not row_vis_acc.empty else ""
+            sit_loc = str(acumulada[acumulada["equipo_std"] == eq_loc].iloc[0].get("situacion_actual", "")).lower() if not acumulada[acumulada["equipo_std"] == eq_loc].empty else ""
+            sit_vis = str(acumulada[acumulada["equipo_std"] == eq_vis].iloc[0].get("situacion_actual", "")).lower() if not acumulada[acumulada["equipo_std"] == eq_vis].empty else ""
 
-            # Zona Alta / Torneos Internacionales
+            # Presión Local
             if any(k in sit_loc for k in ["libertadores", "sudamericana", "titulo"]):
-                mult_loc *= 1.10
-            # Zona Baja / Peligro de Descenso
+                f_loc *= 1.10  # Presión positiva por torneos internacionales
             elif any(k in sit_loc for k in ["peligro", "riesgo", "descenso"]):
-                mult_loc *= 1.12
-            # Zona Media
+                f_loc *= 1.12  # Módulo de urgencia de supervivencia
             elif "zona media" in sit_loc:
-                mult_loc *= 0.92
+                f_loc *= 0.92  # Desaceleración por falta de objetivos
 
+            # Presión Visita
             if any(k in sit_vis for k in ["libertadores", "sudamericana", "titulo"]):
-                mult_vis *= 1.08
+                f_vis *= 1.08
             elif any(k in sit_vis for k in ["peligro", "riesgo", "descenso"]):
-                mult_vis *= 1.06
+                f_vis *= 1.06
             elif "zona media" in sit_vis:
-                mult_vis *= 0.90
+                f_vis *= 0.90
 
-    # D) Clásicos e Historial Directo (Historial_H2H)
+    # 3. Detección H2H
     if not h2h.empty:
-        grandes = ["alianza lima", "universitario", "sporting cristal"]
-        if eq_loc in grandes and eq_vis in grandes:
-            mult_loc *= 0.85
-            mult_vis *= 0.95
-            rho = -0.15
+        match_h2h = h2h[
+            ((h2h["local_std"] == eq_loc) & (h2h["visita_std"] == eq_vis))
+            | ((h2h["local_std"] == eq_vis) & (h2h["visita_std"] == eq_loc))
+        ]
+        if not match_h2h.empty:
+            grandes = ["alianza lima", "universitario", "sporting cristal"]
+            if eq_loc in grandes and eq_vis in grandes:
+                f_loc *= 0.85
+                f_vis *= 0.95
+                rho_ajustado = -0.15
 
-    # Retorno garantizado de un diccionario con las variables requeridas
-    return {
-        "f_loc": float(mult_loc),
-        "f_vis": max(0.4, float(mult_vis)),
-        "rho": float(rho)
-    }
+    return f_loc, max(0.4, f_vis), rho_ajustado
 
 def calcular_tasas_equipo(datos, equipo, antes_de=None):
-    eq = normalizar(equipo)
+    eq = normalizar_nombre(equipo)
     ap = datos.get("apertura", pd.DataFrame()).copy()
     cl = datos.get("clausura", pd.DataFrame()).copy()
-    prior_gf = datos.get("prior_gf", 1.6824)
-    prior_ga = datos.get("prior_ga", 1.0815)
+    prior_gf = datos.get("prior_gf", 1.3)
+    prior_ga = datos.get("prior_ga", 1.1)
 
+    # Apertura (60% Goles + 40% xG)
     ap_eq = ap[(ap["local_std"] == eq) | (ap["visita_std"] == eq)].copy() if not ap.empty else pd.DataFrame()
     if not ap_eq.empty:
         gf_ap, ga_ap = [], []
@@ -272,6 +300,7 @@ def calcular_tasas_equipo(datos, equipo, antes_de=None):
     else:
         m_gf_ap, m_ga_ap = prior_gf, prior_ga
 
+    # Clausura (Últimos 5 partidos con xG)
     if antes_de is not None and pd.notna(antes_de) and "fecha" in cl.columns:
         cl = cl[cl["fecha"].isna() | (cl["fecha"] < antes_de)]
 
@@ -326,7 +355,6 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
     else:
         ganador, eq_ganador, max_p = "Empate", "Empate", p_emp
 
-    # 1. Definición estricta de recomendación
     if ganador == "Empate" or max_p < 42.0:
         rec = "Empate / Partido Cerrado"
     else:
@@ -336,54 +364,55 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
         elif p_btts >= 52.0:
             rec += " + Ambos marcan"
 
-    # 2. Marcador modal 100% coherente con la recomendación
-    if rec == "Empate / Partido Cerrado":
-        best_i, best_j = (1, 1) if p_btts >= 48.0 else (0, 0)
-    else:
-        necesita_btts = "Ambos marcan" in rec
-        necesita_over = "Más de 2.5" in rec
-        best_i, best_j, max_peso = (2, 1) if ganador == "Local" else (1, 2), -1.0
+    best_i, best_j, max_peso = 1, 0, -1.0
+    for i in range(6):
+        for j in range(6):
+            valido = False
+            if ganador == "Local" and i > j:
+                valido = True
+            elif ganador == "Visita" and j > i:
+                valido = True
+            elif ganador == "Empate" and i == j:
+                valido = True
+            elif max_p < 42.0:
+                valido = True
 
-        for i in range(6):
-            for j in range(6):
-                valido = (ganador == "Local" and i > j) or (ganador == "Visita" and j > i)
-                if necesita_btts:
-                    valido = valido and (i >= 1 and j >= 1)
-                if necesita_over:
-                    valido = valido and (i + j >= 3)
-
-                if valido and matriz[i, j] > max_peso:
-                    max_peso = matriz[i, j]
+            if valido:
+                es_over = (i + j) >= 3
+                peso = matriz[i, j] * (1.5 if (p_over25 >= 50.0 and es_over) or (p_over25 < 50.0 and not es_over) else 1.0)
+                if peso > max_peso:
+                    max_peso = peso
                     best_i, best_j = i, j
 
     return f"{best_i} - {best_j}", rec
 
 # ==============================================================================
-# 4. INTERFAZ Y DESPLIEGUE EN STREAMLIT
+# 4. APLICACIÓN STREAMLIT Y RENDERIZADO
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 dias_espanol = {"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles", "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo"}
 
-def aplicar_estilos_tabla(row):
+def resaltar_texto_resumen(row):
     styles = [""] * len(row)
-    estilo_verde = "color: #2e6930; font-weight: bold;"
-    estilo_rojo = "color: #c0392b; font-weight: bold;"
-
     if row["Recomendacion"] == "Empate / Partido Cerrado":
-        styles[row.index.get_loc("Marcador_Modal")] = estilo_rojo
-        styles[row.index.get_loc("Recomendacion")] = estilo_rojo
+        styles[row.index.get_loc("Marcador_Modal")] = "color: #c0392b; font-weight: bold;"
+        styles[row.index.get_loc("Recomendacion")] = "color: #c0392b; font-weight: bold;"
+    elif row["🔥"] == "🔥":
+        styles[row.index.get_loc("Recomendacion")] = "color: #2e6930; font-weight: bold;"
+    return styles
+
+def resaltar_texto_completo(row):
+    styles = [""] * len(row)
+    if row["Recomendacion"] == "Empate / Partido Cerrado":
+        styles[row.index.get_loc("Marcador_Modal")] = "color: #c0392b; font-weight: bold;"
+        styles[row.index.get_loc("Recomendacion")] = "color: #c0392b; font-weight: bold;"
     else:
-        styles[row.index.get_loc("Recomendacion")] = estilo_verde
-
-    for col in ["% Local", "% Empate", "% Visita", "Más de 2.5 goles", "Ambos marcan: Sí"]:
-        if col in row.index and isinstance(row[col], (int, float)) and row[col] >= 55.0:
-            styles[row.index.get_loc(col)] = estilo_verde
-
+        styles[row.index.get_loc("Recomendacion")] = "color: #2e6930; font-weight: bold;"
     return styles
 
 if os.path.exists(EXCEL_PATH):
     try:
-        datos = cargar_excel_definitivo(EXCEL_PATH)
+        datos = cargar_excel_completo(EXCEL_PATH)
         partidos_df = datos["partidos"]
 
         st.sidebar.header("⚽ Selección de Jornada")
@@ -415,11 +444,7 @@ if os.path.exists(EXCEL_PATH):
             gf_loc, ga_loc = calcular_tasas_equipo(datos, loc, antes_de=fecha_p)
             gf_vis, ga_vis = calcular_tasas_equipo(datos, vis, antes_de=fecha_p)
 
-            # Obtención totalmente segura a través de diccionario
-            factores = obtener_factores_contextuales(datos, loc, vis, row)
-            f_loc = factores["f_loc"]
-            f_vis = factores["f_vis"]
-            rho_dc = factores["rho"]
+            f_loc, f_vis, rho_dc = obtener_factores_contextual_y_situacional(datos, loc, vis, row)
 
             l_loc = max(0.4, ((gf_loc + ga_vis) / 2.0) * f_loc)
             m_vis = max(0.3, ((gf_vis + ga_loc) / 2.0) * f_vis)
@@ -462,17 +487,13 @@ if os.path.exists(EXCEL_PATH):
             if tipo_vista == "Vista Resumida":
                 st.markdown("*Vista ligera optimizada con los días de la semana y datos clave para móviles.*")
                 df_resumido = df_pronosticos[["🔥", "Día", "Hora", "Local", "Visita", "Marcador_Modal", "Recomendacion"]]
-                st.dataframe(df_resumido.style.apply(aplicar_estilos_tabla, axis=1), use_container_width=True, hide_index=True)
+                st.dataframe(df_resumido.style.apply(resaltar_texto_resumen, axis=1), use_container_width=True, hide_index=True)
             else:
                 st.markdown("*Vista extendida con porcentajes completos de probabilidad y goles.*")
-                st.dataframe(
-                    df_pronosticos.style.apply(aplicar_estilos_tabla, axis=1).format("{:.1f}", subset=["% Local", "% Empate", "% Visita", "Más de 2.5 goles", "Ambos marcan: Sí"]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                st.dataframe(df_pronosticos.style.apply(resaltar_texto_completo, axis=1), use_container_width=True, hide_index=True)
 
         with tab2:
-            st.subheader("🏆 Tabla Acumulada Liga 1 (Incentivos de Presión)")
+            st.subheader("🏆 Tabla Acumulada Liga 1 (Presión Situacional)")
             st.dataframe(datos["acumulada"], use_container_width=True)
 
         with tab3:
