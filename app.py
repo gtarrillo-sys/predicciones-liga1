@@ -53,7 +53,7 @@ else:
 st.title("⚽ Modelo de Predicción Liga 1 Perú")
 
 # ==============================================================================
-# 2. NORMALIZACIÓN Y CARGA DE DATOS DE TODAS LAS HOJAS
+# 2. NORMALIZACIÓN Y CARGA DE DATOS
 # ==============================================================================
 def normalizar_nombre(nombre):
     if not isinstance(nombre, str):
@@ -129,7 +129,7 @@ def estandarizar_columnas(df):
     return df
 
 @st.cache_data
-def cargar_excel_completo(fuente):
+def cargar_excel_v3(fuente):
     xls = pd.ExcelFile(fuente)
     hojas = xls.sheet_names
 
@@ -142,13 +142,12 @@ def cargar_excel_completo(fuente):
     geo = estandarizar_columnas(pd.read_excel(xls, sheet_name="Data_Geografica")) if "Data_Geografica" in hojas else pd.DataFrame()
     formulas = pd.read_excel(xls, sheet_name="Formulas") if "Formulas" in hojas else pd.DataFrame()
 
-    # Tratamiento de xG
     for df_xg in [apertura, clausura]:
         if "xg_local" in df_xg.columns and "xg_visita" in df_xg.columns:
             df_xg["xg_local_clean"] = df_xg["xg_local"].astype(str).str.replace(",", ".").astype(float)
             df_xg["xg_visita_clean"] = df_xg["xg_visita"].astype(str).str.replace(",", ".").astype(float)
 
-    prior_gf, prior_ga = 1.3, 1.1
+    prior_gf, prior_ga = 1.68, 1.08
     if not formulas.empty:
         try:
             val_loc = formulas.iloc[0, 3]
@@ -172,9 +171,9 @@ def cargar_excel_completo(fuente):
     }
 
 # ==============================================================================
-# 3. MOTORES MATEMÁTICOS, CONTEXTUALES Y PRESIÓN DE FINAL DE TEMPORADA
+# 3. MOTORES MATEMÁTICOS Y AJUSTES SITUACIONALES
 # ==============================================================================
-def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido):
+def calcular_factores(datos, local, visita, row_partido):
     geo = datos.get("geo", pd.DataFrame())
     h2h = datos.get("h2h", pd.DataFrame())
     acumulada = datos.get("acumulada", pd.DataFrame())
@@ -182,8 +181,9 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
     eq_loc = normalizar_nombre(local)
     eq_vis = normalizar_nombre(visita)
 
-    f_loc, f_vis = 1.15, 0.88
-    rho_ajustado = -0.08
+    f_loc = 1.15
+    f_vis = 0.88
+    rho_dc = -0.08
 
     # 1. Factores Geográficos
     if not geo.empty and "equipo_std" in geo.columns:
@@ -213,7 +213,7 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
             if "sintetic" in cancha_loc and "sintetic" not in cancha_vis:
                 f_vis *= 0.90
 
-    # Días de descanso acumulados
+    # 2. Días de descanso y Horarios
     desc_loc = float(row_partido.get("dias_descanso_local", 7))
     desc_vis = float(row_partido.get("dias_descanso_visita", 7))
     if desc_loc < 4:
@@ -221,7 +221,6 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
     if desc_vis < 4:
         f_vis *= 0.92
 
-    # Ajuste por Horario
     hora_val = row_partido.get("hora", None)
     if pd.notna(hora_val):
         try:
@@ -232,18 +231,16 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
         except Exception:
             pass
 
-    # 2. MOTOR DE PRESIÓN SITUACIONAL (Últimas 5 fechas)
+    # 3. Presión Situacional (Últimas 5 fechas)
     if not acumulada.empty and "equipo_std" in acumulada.columns:
         row_loc_acc = acumulada[acumulada["equipo_std"] == eq_loc]
         row_vis_acc = acumulada[acumulada["equipo_std"] == eq_vis]
 
         pj_loc = float(row_loc_acc.iloc[0].get("pj", 28)) if not row_loc_acc.empty else 28
-        
         if pj_loc >= 28:
             sit_loc = str(row_loc_acc.iloc[0].get("situacion_actual", "")).lower() if not row_loc_acc.empty else ""
             sit_vis = str(row_vis_acc.iloc[0].get("situacion_actual", "")).lower() if not row_vis_acc.empty else ""
 
-            # Presión Local
             if any(k in sit_loc for k in ["libertadores", "sudamericana", "titulo"]):
                 f_loc *= 1.10
             elif any(k in sit_loc for k in ["peligro", "riesgo", "descenso"]):
@@ -251,7 +248,6 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
             elif "zona media" in sit_loc:
                 f_loc *= 0.92
 
-            # Presión Visita
             if any(k in sit_vis for k in ["libertadores", "sudamericana", "titulo"]):
                 f_vis *= 1.08
             elif any(k in sit_vis for k in ["peligro", "riesgo", "descenso"]):
@@ -259,25 +255,16 @@ def obtener_factores_contextual_y_situacional(datos, local, visita, row_partido)
             elif "zona media" in sit_vis:
                 f_vis *= 0.90
 
-    # 3. Detección H2H
-    if not h2h.empty:
-        grandes = ["alianza lima", "universitario", "sporting cristal"]
-        if eq_loc in grandes and eq_vis in grandes:
-            f_loc *= 0.85
-            f_vis *= 0.95
-            rho_ajustado = -0.15
-
-    # Retorno estrictamente garantizado de 3 valores
-    return float(f_loc), max(0.4, float(f_vis)), float(rho_ajustado)
+    # Retorno explícito de un tuple de 3 elementos
+    return float(f_loc), max(0.4, float(f_vis)), float(rho_dc)
 
 def calcular_tasas_equipo(datos, equipo, antes_de=None):
     eq = normalizar_nombre(equipo)
     ap = datos.get("apertura", pd.DataFrame()).copy()
     cl = datos.get("clausura", pd.DataFrame()).copy()
-    prior_gf = datos.get("prior_gf", 1.3)
-    prior_ga = datos.get("prior_ga", 1.1)
+    prior_gf = datos.get("prior_gf", 1.68)
+    prior_ga = datos.get("prior_ga", 1.08)
 
-    # Apertura (60% Goles + 40% xG)
     ap_eq = ap[(ap["local_std"] == eq) | (ap["visita_std"] == eq)].copy() if not ap.empty else pd.DataFrame()
     if not ap_eq.empty:
         gf_ap, ga_ap = [], []
@@ -297,7 +284,6 @@ def calcular_tasas_equipo(datos, equipo, antes_de=None):
     else:
         m_gf_ap, m_ga_ap = prior_gf, prior_ga
 
-    # Clausura (Últimos 5 partidos)
     if antes_de is not None and pd.notna(antes_de) and "fecha" in cl.columns:
         cl = cl[cl["fecha"].isna() | (cl["fecha"] < antes_de)]
 
@@ -383,7 +369,7 @@ def obtener_marcador_y_recomendacion(matriz, p_loc, p_emp, p_vis, loc, vis, p_ov
     return f"{best_i} - {best_j}", rec
 
 # ==============================================================================
-# 4. INTERFAZ Y RENDERIZADO
+# 4. INTERFAZ STREAMLIT
 # ==============================================================================
 EXCEL_PATH = "Liga1_2026.xlsx"
 dias_espanol = {"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles", "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo"}
@@ -407,7 +393,7 @@ def aplicar_estilos_tabla(row):
 
 if os.path.exists(EXCEL_PATH):
     try:
-        datos = cargar_excel_completo(EXCEL_PATH)
+        datos = cargar_excel_v3(EXCEL_PATH)
         partidos_df = datos["partidos"]
 
         st.sidebar.header("⚽ Selección de Jornada")
@@ -439,8 +425,9 @@ if os.path.exists(EXCEL_PATH):
             gf_loc, ga_loc = calcular_tasas_equipo(datos, loc, antes_de=fecha_p)
             gf_vis, ga_vis = calcular_tasas_equipo(datos, vis, antes_de=fecha_p)
 
-            # Desempaque seguro de 3 valores
-            f_loc, f_vis, rho_dc = obtener_factores_contextual_y_situacional(datos, loc, vis, row)
+            # Cálculo de factores encapsulado en una sola llamada de 3 retornos
+            res_fac = calcular_factores(datos, loc, vis, row)
+            f_loc, f_vis, rho_dc = res_fac[0], res_fac[1], res_fac[2]
 
             l_loc = max(0.4, ((gf_loc + ga_vis) / 2.0) * f_loc)
             m_vis = max(0.3, ((gf_vis + ga_loc) / 2.0) * f_vis)
