@@ -589,20 +589,37 @@ def pronosticar_partido(datos, partido):
     p_btts = float(matriz[1:, 1:].sum() * 100)
 
     i, j = np.unravel_index(np.argmax(matriz), matriz.shape)
-    if p_local >= p_empate and p_local >= p_visita:
-        ganador = f"Gana {loc}"
-        prob_ganador = p_local
-    elif p_visita >= p_empate and p_visita >= p_local:
-        ganador = f"Gana {vis}"
-        prob_ganador = p_visita
-    else:
-        ganador = "Empate"
-        prob_ganador = p_empate
+    # Pronóstico 1X2: se determina con la probabilidad total de cada resultado.
+    # El marcador modal es independiente: representa el marcador exacto individual
+    # con mayor probabilidad, por lo que puede ser 1-1 aunque el 1X2 favorezca a un equipo.
+    probabilidades_1x2 = {
+        f"Gana {loc}": p_local,
+        "Empate": p_empate,
+        f"Gana {vis}": p_visita,
+    }
+    ganador = max(probabilidades_1x2, key=probabilidades_1x2.get)
+    prob_ganador = probabilidades_1x2[ganador]
+    orden_probs = sorted(probabilidades_1x2.values(), reverse=True)
+    margen = orden_probs[0] - orden_probs[1]
 
-    if prob_ganador < 40:
-        recomendacion = "Pronóstico abierto"
+    # Semáforo de confianza:
+    # Verde = selección fuerte; rojo = partido cerrado; amarillo = intermedio.
+    if prob_ganador >= 60 and margen >= 12:
+        estado_pronostico = "FIJA"
+        senal = "🟢"
+    elif margen <= 7 or prob_ganador < 40:
+        estado_pronostico = "CERRADO"
+        senal = "🔴"
     else:
-        recomendacion = ganador
+        estado_pronostico = "INTERMEDIO"
+        senal = "🟡"
+
+    if estado_pronostico == "FIJA":
+        recomendacion = f"{ganador} (confianza alta)"
+    elif estado_pronostico == "CERRADO":
+        recomendacion = f"Partido cerrado — {ganador} es solo una ligera preferencia"
+    else:
+        recomendacion = f"{ganador} (confianza media)"
     if p_over25 >= 55:
         recomendacion += " | Más de 2.5 goles"
     elif p_under25 >= 58:
@@ -626,8 +643,12 @@ def pronosticar_partido(datos, partido):
         "Menos de 2.5 goles": round(p_under25, 1),
         "Ambos marcan: Sí": round(p_btts, 1),
         "Marcador_Modal": f"{i} - {j}",
+        "Pronóstico 1X2": ganador,
+        "Estado": estado_pronostico,
+        "Señal": senal,
         "Recomendacion": recomendacion,
         "Prob. principal": round(max(p_local, p_empate, p_visita), 1),
+        "Margen 1X2": round(margen, 1),
         "Contexto": contexto,
     }
 
@@ -683,19 +704,38 @@ with tab1:
     if df_pronosticos.empty:
         st.info("No hay partidos disponibles para esta selección.")
     else:
-        df_pronosticos.insert(
-            0, "Señal",
-            np.where(df_pronosticos["Prob. principal"] >= 58, "🔥",
-                     np.where(df_pronosticos["Prob. principal"] >= 45, "➖", "⚠️"))
-        )
+        def colorear_fila(fila):
+            estado = fila.get("Estado", "")
+            if estado == "FIJA":
+                color = "background-color: #d9ead3; color: #14532d;"
+            elif estado == "CERRADO":
+                color = "background-color: #f4cccc; color: #7f1d1d;"
+            else:
+                color = "background-color: #fff2cc; color: #783f04;"
+            return [color] * len(fila)
+
         if tipo_vista == "Vista Resumida":
-            cols = ["Señal", "Día", "Hora", "Local", "Visita",
-                    "Marcador_Modal", "Recomendacion"]
-            st.dataframe(df_pronosticos[cols], use_container_width=True, hide_index=True)
-        else:
+            cols = ["Señal", "Estado", "Día", "Hora", "Local", "Visita",
+                    "Marcador_Modal", "Pronóstico 1X2", "Recomendacion"]
+            vista = df_pronosticos[cols]
             st.dataframe(
-                df_pronosticos.drop(columns=["Contexto"], errors="ignore"),
-                use_container_width=True, hide_index=True
+                vista.style.apply(colorear_fila, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "🟢 FIJA: probabilidad principal ≥ 60% y ventaja ≥ 12 puntos. "
+                "🔴 CERRADO: diferencia entre las dos opciones más probables ≤ 7 puntos "
+                "o ninguna opción supera el 40%. 🟡 INTERMEDIO: los demás casos. "
+                "El marcador modal es el marcador exacto más probable; el pronóstico 1X2 "
+                "es el resultado con mayor probabilidad acumulada."
+            )
+        else:
+            vista_completa = df_pronosticos.drop(columns=["Contexto"], errors="ignore")
+            st.dataframe(
+                vista_completa.style.apply(colorear_fila, axis=1),
+                use_container_width=True,
+                hide_index=True,
             )
         csv = df_pronosticos.drop(columns=["Contexto"], errors="ignore").to_csv(index=False).encode("utf-8-sig")
         st.download_button("⬇️ Descargar pronósticos CSV", csv,
@@ -750,4 +790,3 @@ with tab5:
         "entre torneos no puede reconstruirse con total certeza solo con esas columnas. "
         "Para backtesting estricto, agregue una fecha real a cada partido histórico."
     )
-
