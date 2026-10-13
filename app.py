@@ -588,15 +588,22 @@ def pronosticar_partido(datos, partido):
     p_under25 = 100 - p_over25
     p_btts = float(matriz[1:, 1:].sum() * 100)
 
-    i, j = np.unravel_index(np.argmax(matriz), matriz.shape)
-    # Pronóstico 1X2: se determina con la probabilidad total de cada resultado.
-    # El marcador modal es independiente: representa el marcador exacto individual
-    # con mayor probabilidad, por lo que puede ser 1-1 aunque el 1X2 favorezca a un equipo.
-    probabilidades_1x2 = {
-        f"Gana {loc}": p_local,
-        "Empate": p_empate,
-        f"Gana {vis}": p_visita,
-    }
+    # Marcador modal global: el marcador exacto más probable.
+    i_modal, j_modal = np.unravel_index(
+    np.argmax(matriz), matriz.shape
+    )
+
+    # Marcador más probable condicionado al pronóstico 1X2.
+    if p_local >= p_empate and p_local >= p_visita:
+    mascara = np.tril(matriz, -1)
+    elif p_visita >= p_empate and p_visita >= p_local:
+    mascara = np.triu(matriz, 1)
+    else:
+    mascara = np.diag(np.diag(matriz))
+
+    i_pron, j_pron = np.unravel_index(
+    np.argmax(mascara), mascara.shape
+    )
     ganador = max(probabilidades_1x2, key=probabilidades_1x2.get)
     prob_ganador = probabilidades_1x2[ganador]
     orden_probs = sorted(probabilidades_1x2.values(), reverse=True)
