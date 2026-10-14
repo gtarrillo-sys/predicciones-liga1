@@ -284,10 +284,12 @@ def construir_historico(datos):
         df["gl"] = pd.to_numeric(df["gl"], errors="coerce")
         df["gv"] = pd.to_numeric(df["gv"], errors="coerce")
         df = df.dropna(subset=["gl", "gv", "local_std", "visita_std"])
-        for xg, goles in [("xg_local", "gl"), ("xg_visita", "gv")]:
+        # xG se conserva únicamente cuando existe como dato real.
+        # No se sustituye por goles reales.
+        for xg in ("xg_local", "xg_visita"):
             if xg not in df.columns:
-                df[xg] = df[goles]
-            df[xg] = pd.to_numeric(df[xg], errors="coerce").fillna(df[goles])
+                df[xg] = np.nan
+            df[xg] = pd.to_numeric(df[xg], errors="coerce")
         partes.append(df)
     return pd.concat(partes, ignore_index=True, sort=False) if partes else pd.DataFrame()
 
@@ -399,89 +401,96 @@ def presion_partido(fila_l, fila_v):
 # ---------------------------------------------------------------------
 # 5. Rendimiento de equipo con resultados, xG, tablas y forma
 # ---------------------------------------------------------------------
-def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
-    eq = normalizar_nombre(equipo)
+def filtrar_historico_previo(fecha_partido=None, jornada_partido=None):
+    """Usa fecha real como corte principal. Nunca usa partidos del mismo día."""
     h = historico.copy()
+    if h.empty:
+        return h
+
+    if fecha_partido is not None and pd.notna(fecha_partido) and "fecha" in h.columns:
+        fecha_obj = pd.Timestamp(fecha_partido).normalize()
+        fechas = pd.to_datetime(h["fecha"], errors="coerce")
+        # Solo registros con fecha conocida y estrictamente anteriores.
+        h = h[fechas.notna() & (fechas.dt.normalize() < fecha_obj)].copy()
+    elif jornada_partido is not None and pd.notna(jornada_partido):
+        try:
+            jn = int(jornada_partido)
+            h = h[(h["fuente"] != "Resultados_Clausura") | (h["jornada_num"] < jn)].copy()
+        except (ValueError, TypeError):
+            pass
+    return h
+
+
+def promedios_excel_equipo(equipo, fecha_partido=None, jornada_partido=None):
+    """Reproduce las cuatro primeras fórmulas de Resultados_Clausura."""
+    eq = normalizar_nombre(equipo)
+    h = filtrar_historico_previo(fecha_partido, jornada_partido)
+
+    if h.empty:
+        return {"K": np.nan, "L": np.nan, "M": np.nan, "N": np.nan,
+                "n_local": 0, "n_visita": 0}
+
+    local = h[h["local_std"] == eq].copy()
+    visita = h[h["visita_std"] == eq].copy()
+
+    return {
+        "K": float(local["gl"].mean()) if not local.empty else np.nan,
+        "L": float(local["gv"].mean()) if not local.empty else np.nan,
+        "M": float(visita["gv"].mean()) if not visita.empty else np.nan,
+        "N": float(visita["gl"].mean()) if not visita.empty else np.nan,
+        "n_local": len(local),
+        "n_visita": len(visita),
+    }
+
+
+def factores_altitud_excel(altitud):
+    """Replica exactamente los factores de las fórmulas Excel."""
+    alt = a_float(altitud)
+    if not np.isfinite(alt):
+        return 1.00, 1.00
+    f_local = 1.20 if alt >= 2000 else (1.10 if alt >= 1000 else 1.00)
+    f_visita = 0.75 if alt >= 2000 else (0.85 if alt >= 1000 else 1.00)
+    return f_local, f_visita
+
+
+def lambdas_clausura_excel(local, visita, fecha_partido=None, jornada_partido=None, altitud_estadio=np.nan):
+    """Implementa: ((K*N)/D2)*factor_local y ((M*L)/D6)*factor_visitante."""
+    ml = promedios_excel_equipo(local, fecha_partido, jornada_partido)
+    mv = promedios_excel_equipo(visita, fecha_partido, jornada_partido)
+    d2, d6 = datos["prior_local"], datos["prior_visita"]
+    f_local, f_visita = factores_altitud_excel(altitud_estadio)
+
+    lam_l = np.nan if not all(np.isfinite([ml["K"], mv["N"], d2])) or d2 <= 0 else (ml["K"] * mv["N"] / d2) * f_local
+    lam_v = np.nan if not all(np.isfinite([mv["M"], ml["L"], d6])) or d6 <= 0 else (mv["M"] * ml["L"] / d6) * f_visita
+
+    return {
+        "lambda_local": lam_l,
+        "lambda_visita": lam_v,
+        "local": ml,
+        "visita": mv,
+        "D2": d2,
+        "D6": d6,
+        "factor_altitud_local": f_local,
+        "factor_altitud_visita": f_visita,
+    }
+
+
+def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
+    """Métricas descriptivas previas al partido, sin fuga temporal."""
+    eq = normalizar_nombre(equipo)
+    h = filtrar_historico_previo(fecha_partido, jornada_partido)
     if h.empty:
         pl, pv = datos["prior_local"], datos["prior_visita"]
         return {"gf": pl, "ga": pv, "gf_local": pl, "ga_local": pv,
                 "gf_visita": pv, "ga_visita": pl, "n": 0, "forma": .5}
 
-    # El Excel actual no incluye fecha en resultados: si existe, usarla.
-    if fecha_partido is not None and pd.notna(fecha_partido) and "fecha" in h.columns:
-        fechas = pd.to_datetime(h["fecha"], errors="coerce")
-        if fechas.notna().any():
-            h = h[fechas.isna() | (fechas < pd.Timestamp(fecha_partido))]
-
-    # No usar jornadas futuras del Clausura. Apertura se conserva como torneo previo.
-    if jornada_partido is not None and pd.notna(jornada_partido):
-        try:
-            jn = int(jornada_partido)
-            h = h[(h["fuente"] != "Resultados_Clausura") | (h["jornada_num"] < jn)]
-        except (ValueError, TypeError):
-            pass
-
     loc = h[h["local_std"] == eq].copy()
     vis = h[h["visita_std"] == eq].copy()
-    if loc.empty and vis.empty:
-        pl, pv = datos["prior_local"], datos["prior_visita"]
-        return {"gf": pl, "ga": pv, "gf_local": pl, "ga_local": pv,
-                "gf_visita": pv, "ga_visita": pl, "n": 0, "forma": .5}
-
-    def promedio_ponderado(filas, columna_goles, columna_xg, peso_base):
-        if filas.empty:
-            return np.nan
-        goles = pd.to_numeric(filas[columna_goles], errors="coerce")
-        xg = pd.to_numeric(filas[columna_xg], errors="coerce").fillna(goles)
-        # 60% goles reales y 40% xG
-        valores = .60 * goles + .40 * xg
-        pesos = np.where(filas["fuente"].eq("Resultados_Clausura"), .60, .40)
-        # Dar peso moderado a los cinco registros más recientes del subconjunto.
-        pesos = pesos.astype(float)
-        pesos[max(0, len(pesos)-5):] *= 1.20
-        return float(np.average(valores, weights=pesos)) if len(valores) else np.nan
-
-    gf_local = promedio_ponderado(loc, "gl", "xg_local", .4)
-    ga_local = promedio_ponderado(loc, "gv", "xg_visita", .4)
-    gf_visita = promedio_ponderado(vis, "gv", "xg_visita", .6)
-    ga_visita = promedio_ponderado(vis, "gl", "xg_local", .6)
-
-    # Los promedios de la hoja Clausura se incorporan solo como señal auxiliar
-    # de forma reciente. Se mezclan con cautela para evitar doble contabilización.
-    def ajuste_promedio_clausura(equipo_std, columna_promedio):
-        d = h[(h["fuente"] == "Resultados_Clausura") &
-              ((h["local_std"] == equipo_std) | (h["visita_std"] == equipo_std))]
-        if d.empty or columna_promedio not in d.columns:
-            return np.nan
-        return a_float(d.iloc[-1].get(columna_promedio))
-
-    # Tabla: tasas GF/GC por partido, mezcladas parcialmente con la señal histórica.
-    fila_ac = fila_equipo_tabla(tabla_acumulada, equipo)
-    fila_cl = fila_equipo_tabla(tabla_clausura, equipo)
-    def tasa(fila, columna):
-        pj = a_float(fila.get("pj")) if fila is not None else np.nan
-        v = a_float(fila.get(columna)) if fila is not None else np.nan
-        return v / pj if np.isfinite(pj) and pj > 0 and np.isfinite(v) else np.nan
-
-    tabla_gf = np.nanmean([tasa(fila_ac, "gf"), tasa(fila_cl, "gf")])
-    tabla_ga = np.nanmean([tasa(fila_ac, "gc"), tasa(fila_cl, "gc")])
-    gf_hist = np.nanmean([gf_local, gf_visita])
-    ga_hist = np.nanmean([ga_local, ga_visita])
-    if not np.isfinite(gf_hist):
-        gf_hist = datos["prior_local"]
-    if not np.isfinite(ga_hist):
-        ga_hist = datos["prior_visita"]
-    if np.isfinite(tabla_gf):
-        gf_hist = .80 * gf_hist + .20 * tabla_gf
-    if np.isfinite(tabla_ga):
-        ga_hist = .80 * ga_hist + .20 * tabla_ga
-
-    # Forma de los últimos cinco partidos disponibles del equipo.
     recientes = pd.concat([
         loc.assign(gf=loc["gl"], ga=loc["gv"]),
-        vis.assign(gf=vis["gv"], ga=vis["gl"]),
+        vis.assign(gf=vis["gv"], ga=vis["gl"])
     ], ignore_index=True)
-    if "fecha" in recientes.columns and recientes["fecha"].notna().any():
+    if "fecha" in recientes.columns:
         recientes = recientes.sort_values("fecha")
     recientes = recientes.tail(5)
     forma = .5
@@ -490,16 +499,15 @@ def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
                           np.where(recientes["gf"] == recientes["ga"], 1, 0))
         forma = float(np.mean(puntos) / 3.0)
 
-    # Los campos Prom_GF_* se leen y se conservan en el Excel; se reportan para
-    # auditoría. No se vuelven a mezclar aquí porque su definición puede incluir
-    # partidos ya contabilizados en las tablas.
+    gf_local = float(loc["gl"].mean()) if not loc.empty else datos["prior_local"]
+    ga_local = float(loc["gv"].mean()) if not loc.empty else datos["prior_visita"]
+    gf_visita = float(vis["gv"].mean()) if not vis.empty else datos["prior_visita"]
+    ga_visita = float(vis["gl"].mean()) if not vis.empty else datos["prior_local"]
     return {
-        "gf": max(.2, float(gf_hist)),
-        "ga": max(.2, float(ga_hist)),
-        "gf_local": max(.2, float(gf_local) if np.isfinite(gf_local) else gf_hist),
-        "ga_local": max(.2, float(ga_local) if np.isfinite(ga_local) else ga_hist),
-        "gf_visita": max(.2, float(gf_visita) if np.isfinite(gf_visita) else gf_hist),
-        "ga_visita": max(.2, float(ga_visita) if np.isfinite(ga_visita) else ga_hist),
+        "gf": max(.2, np.nanmean([gf_local, gf_visita])),
+        "ga": max(.2, np.nanmean([ga_local, ga_visita])),
+        "gf_local": max(.2, gf_local), "ga_local": max(.2, ga_local),
+        "gf_visita": max(.2, gf_visita), "ga_visita": max(.2, ga_visita),
         "n": len(loc) + len(vis), "forma": forma,
     }
 
@@ -523,17 +531,10 @@ def obtener_contexto(datos, partido):
     il, iv = info_geo(eq_loc), info_geo(eq_vis)
     alt_l = a_float(il.get("altitud_msnm")) if il is not None else a_float(partido.get("altitud_local"), 0)
     alt_v = a_float(iv.get("altitud_msnm")) if iv is not None else a_float(partido.get("altitud_visita"), 0)
-    delta_archivo = a_float(partido.get("delta_altitud_msnm"))
-    delta = (alt_l - alt_v) if (not np.isfinite(delta_archivo) or delta_archivo == 0) else delta_archivo
+    delta = alt_l - alt_v if np.isfinite(alt_l) and np.isfinite(alt_v) else np.nan
 
-    if delta > 2000:
-        f_loc *= 1.12; f_vis *= .84
-    elif delta > 1200:
-        f_loc *= 1.07; f_vis *= .91
-    elif delta < -2000:
-        f_loc *= .94; f_vis *= 1.05
-    elif delta < -1200:
-        f_loc *= .97; f_vis *= 1.03
+    # La altitud NO se vuelve a aplicar aquí: la metodología Excel
+    # la incorpora directamente en lambda mediante J (altitud del estadio).
 
     clima_l = str(il.get("tipo_clima", "")).lower() if il is not None else ""
     clima_v = str(iv.get("tipo_clima", "")).lower() if iv is not None else ""
@@ -550,7 +551,7 @@ def obtener_contexto(datos, partido):
 
     hora = parsear_hora(partido.get("hora"))
     try:
-        if int(hora.split(":")[0]) in (11, 12, 13) and delta > 1000:
+        if int(hora.split(":")[0]) in (11, 12, 13) and np.isfinite(delta) and delta > 1000:
             f_loc *= 1.02; f_vis *= .99
     except Exception:
         pass
@@ -618,14 +619,36 @@ def pronosticar_partido(datos, partido):
     loc, vis = limpio(partido.get("local")), limpio(partido.get("visita"))
     fecha = partido.get("fecha")
     jornada_num = partido.get("jornada_num")
-    ml = metricas_equipo(datos, loc, fecha, jornada_num)
-    mv = metricas_equipo(datos, vis, fecha, jornada_num)
+
     f_loc, f_vis, rho, contexto = obtener_contexto(datos, partido)
 
-    lambda_loc = ((ml["gf_local"] + mv["ga_visita"]) / 2) * f_loc
-    lambda_vis = ((mv["gf_visita"] + ml["ga_local"]) / 2) * f_vis
-    lambda_loc = .88 * lambda_loc + .12 * datos["prior_local"]
-    lambda_vis = .88 * lambda_vis + .12 * datos["prior_visita"]
+    # Metodología principal: fórmulas de Resultados_Clausura.
+    # La altitud ya está incorporada en esta etapa.
+    excel = lambdas_clausura_excel(
+        loc, vis, fecha, jornada_num,
+        contexto.get("Altitud local", np.nan)
+    )
+
+    lambda_loc = excel["lambda_local"]
+    lambda_vis = excel["lambda_visita"]
+
+    # Respaldo si algún equipo todavía no tiene suficientes datos.
+    if not np.isfinite(lambda_loc) or not np.isfinite(lambda_vis):
+        ml = metricas_equipo(datos, loc, fecha, jornada_num)
+        mv = metricas_equipo(datos, vis, fecha, jornada_num)
+        lambda_loc = ((ml["gf_local"] + mv["ga_visita"]) / 2) if not np.isfinite(lambda_loc) else lambda_loc
+        lambda_vis = ((mv["gf_visita"] + ml["ga_local"]) / 2) if not np.isfinite(lambda_vis) else lambda_vis
+
+    # Ajustes contextuales pequeños que NO reemplazan la fórmula Excel.
+    # La altitud no se reaplica aquí para evitar doble conteo.
+    if contexto.get("Descanso local", 7) < 4:
+        lambda_loc *= .95
+    if contexto.get("Descanso visita", 7) < 4:
+        lambda_vis *= .95
+    if APLICAR_MICROAJUSTE_PRESION and contexto.get("Índice presión (0-1)", 0) >= .80:
+        lambda_loc *= 1.015
+        lambda_vis *= 1.015
+
     lambda_loc = float(np.clip(lambda_loc, .20, 4.0))
     lambda_vis = float(np.clip(lambda_vis, .20, 4.0))
 
@@ -633,8 +656,7 @@ def pronosticar_partido(datos, partido):
     p_local = float(np.tril(matriz, -1).sum() * 100)
     p_empate = float(np.diag(matriz).sum() * 100)
     p_visita = float(np.triu(matriz, 1).sum() * 100)
-    p_over = float(sum(matriz[i, j] for i in range(len(matriz))
-                       for j in range(len(matriz)) if i + j >= 3) * 100)
+    p_over = float(sum(matriz[i, j] for i in range(len(matriz)) for j in range(len(matriz)) if i + j >= 3) * 100)
     p_under = 100 - p_over
     p_btts = float(matriz[1:, 1:].sum() * 100)
 
@@ -644,7 +666,7 @@ def pronosticar_partido(datos, partido):
     orden = sorted(probs.values(), reverse=True)
     margen = orden[0] - orden[1]
 
-    # Marcador más probable condicionado al resultado 1X2.
+    # Marcador compatible: condicionado al 1X2 elegido.
     if ganador == "Local":
         mascara = np.tril(matriz, -1)
     elif ganador == "Visita":
@@ -665,30 +687,37 @@ def pronosticar_partido(datos, partido):
         f"Partido cerrado — {ganador} es una ligera preferencia" if estado == "CERRADO" else
         f"{ganador} (confianza media)"
     )
-    if p_over >= 55: recomendacion += " | Más de 2.5 goles"
-    elif p_under >= 58: recomendacion += " | Menos de 2.5 goles"
-    if p_btts >= 55: recomendacion += " | Ambos marcan"
+    if p_over >= 55:
+        recomendacion += " | Más de 2.5 goles"
+    elif p_under >= 58:
+        recomendacion += " | Menos de 2.5 goles"
+    if p_btts >= 55:
+        recomendacion += " | Ambos marcan"
 
-    dia = limpio(partido.get("dia"))
-    if not dia and pd.notna(fecha):
-        dia = pd.Timestamp(fecha).day_name()
+    dia = limpio(partido.get("dia")) or (pd.Timestamp(fecha).day_name() if pd.notna(fecha) else "Por definir")
+    dia = {"Monday":"Lunes","Tuesday":"Martes","Wednesday":"Miércoles","Thursday":"Jueves","Friday":"Viernes","Saturday":"Sábado","Sunday":"Domingo"}.get(dia, dia)
 
     return {
         "Señal": senal, "Estado": estado, "Día": dia or "Por definir",
         "Hora": parsear_hora(partido.get("hora")), "Local": loc, "Visita": vis,
         "λ Local": round(lambda_loc, 2), "λ Visita": round(lambda_vis, 2),
-        "% Local": round(p_local, 1), "% Empate": round(p_empate, 1),
-        "% Visita": round(p_visita, 1), "Más de 2.5 goles": round(p_over, 1),
-        "Menos de 2.5 goles": round(p_under, 1), "Ambos marcan: Sí": round(p_btts, 1),
-        "Marcador_Modal": f"{i_modal} - {j_modal}",
-        "Marcador_Pronosticado": f"{i_pron} - {j_pron}",
+        "% Local": round(p_local, 1), "% Empate": round(p_empate, 1), "% Visita": round(p_visita, 1),
+        "Más de 2.5 goles": round(p_over, 1), "Menos de 2.5 goles": round(p_under, 1), "Ambos marcan: Sí": round(p_btts, 1),
+        "Marcador compatible": f"{i_pron} - {j_pron}",
+        "Marcador modal": f"{i_modal} - {j_modal}",
         "Pronóstico 1X2": ganador, "Recomendacion": recomendacion,
         "Prob. principal": round(max(probs.values()), 1), "Margen 1X2": round(margen, 1),
-        "Objetivo local": contexto.get("Objetivo local", ""),
-        "Objetivo visita": contexto.get("Objetivo visita", ""),
-        "Presión competitiva": contexto.get("Presión competitiva", ""),
-        "Índice presión (0-1)": contexto.get("Índice presión (0-1)", np.nan),
+        "Prom_GF_Local": round(excel["local"]["K"], 3) if np.isfinite(excel["local"]["K"]) else np.nan,
+        "Prom_GC_Local": round(excel["local"]["L"], 3) if np.isfinite(excel["local"]["L"]) else np.nan,
+        "Prom_GF_Visita": round(excel["visita"]["M"], 3) if np.isfinite(excel["visita"]["M"]) else np.nan,
+        "Prom_GC_Visita": round(excel["visita"]["N"], 3) if np.isfinite(excel["visita"]["N"]) else np.nan,
+        "D2": round(excel["D2"], 4), "D6": round(excel["D6"], 4),
+        "Factor altitud local": round(excel["factor_altitud_local"], 2),
+        "Factor altitud visita": round(excel["factor_altitud_visita"], 2),
+        "Objetivo local": contexto.get("Objetivo local", ""), "Objetivo visita": contexto.get("Objetivo visita", ""),
+        "Presión competitiva": contexto.get("Presión competitiva", ""), "Índice presión (0-1)": contexto.get("Índice presión (0-1)", np.nan),
         "Contexto": contexto,
+        "Metodología": "Clausura: fórmula Excel + Poisson/Dixon-Coles",
     }
 
 # ---------------------------------------------------------------------
@@ -770,7 +799,8 @@ with tab1:
         if tipo_vista == "Vista resumida":
             cols = [
                 "Señal", "Estado", "Día", "Hora", "Local", "Visita",
-                "Marcador_Modal", "Pronóstico 1X2", "Recomendacion",
+                "Pronóstico 1X2", "Marcador compatible",
+                "Más de 2.5 goles", "Ambos marcan: Sí", "Recomendacion",
             ]
         else:
             cols = [c for c in df_pronosticos.columns if c != "Contexto"]
@@ -783,8 +813,8 @@ with tab1:
             "🟢 FIJA: probabilidad principal ≥ 60% y ventaja ≥ 12 puntos. "
             "🔴 CERRADO: margen entre las dos opciones principales ≤ 7 puntos "
             "o ninguna opción supera el 40%. 🟡 INTERMEDIO: los demás casos. "
-            "El marcador modal es el exacto más probable sin condicionar; "
-            "el marcador pronosticado está condicionado al 1X2 seleccionado."
+            "El Marcador compatible es el marcador exacto más probable condicionado al 1X2 seleccionado. "
+            "El marcador modal se conserva como referencia secundaria en la vista completa."
         )
         csv = df_pronosticos.drop(columns=["Contexto"], errors="ignore").to_csv(
             index=False, encoding="utf-8-sig"
@@ -843,11 +873,26 @@ with tab5:
         "Promedio goles local": datos["prior_local"],
         "Promedio goles visita": datos["prior_visita"],
     })
+    for hoja in ["Resultados_Apertura", "Resultados_Clausura"]:
+        dfh = datos.get(hoja, pd.DataFrame())
+        if "fecha" not in dfh.columns:
+            st.error(f"{hoja}: no se detectó la columna Fecha.")
+        else:
+            fechas = pd.to_datetime(dfh["fecha"], errors="coerce")
+            validas = int(fechas.notna().sum())
+            st.write(f"**{hoja}** — fechas válidas: {validas}/{len(dfh)}")
+            if validas:
+                st.write(f"Rango: {fechas.min().strftime('%d/%m/%Y')} → {fechas.max().strftime('%d/%m/%Y')}")
+
+    st.success(
+        "Control temporal activo: el histórico se corta estrictamente con fecha anterior al partido. "
+        "La jornada queda como control secundario cuando no existe fecha."
+    )
+
     st.info(
-        "Nota de calidad de datos: la hoja Resultados_Apertura y Resultados_Clausura "
-        "no incluye fecha de partido en el archivo revisado. Por eso el filtro temporal "
-        "se apoya en jornada del Clausura y no puede excluir con precisión partidos del "
-        "Apertura por fecha. Para una validación estricta, añade la fecha real a ambas hojas."
+        "Metodología Clausura: Prom_GF/GC se calcula acumulando Apertura y Clausura previos al partido. "
+        "La lambda base sigue ((K×N)/D2) para local y ((M×L)/D6) para visitante, "
+        "incluyendo los factores de altitud definidos en las fórmulas Excel."
     )
 
 with tab6:
@@ -896,5 +941,7 @@ with tab6:
         "presenta como señal contextual y no debe interpretarse como una probabilidad "
         "de ganar ni como una garantía de clasificación o descenso."
     )
+
+
 
 
