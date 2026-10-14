@@ -775,7 +775,7 @@ def pronosticar_partido(datos, partido):
         "Hora": parsear_hora(partido.get("hora")), "Local": loc, "Visita": vis,
         "λ Local": round(lambda_loc, 2), "λ Visita": round(lambda_vis, 2),
         "% Local": round(p_local, 1), "% Empate": round(p_empate, 1), "% Visita": round(p_visita, 1),
-        "Más de 2.5 goles": round(p_over, 1), "Menos de 2.5 goles": round(p_under, 1), "Ambos marcan: Sí": round(p_btts, 1),
+        "Más de 2.5 goles": f"{p_over:.1f}%", "Menos de 2.5 goles": f"{p_under:.1f}%", "Ambos marcan: Sí": f"{p_btts:.1f}%",
         "Marcador compatible": f"{i_pron} - {j_pron}",
         "Marcador modal": f"{i_modal} - {j_modal}",
         "Pronóstico 1X2": ganador, "Recomendacion": recomendacion,
@@ -920,6 +920,16 @@ def estilizar_texto(fila):
             estilos.append(f"color: {color}; font-weight: 800;")
         elif col in ("Pronóstico 1X2", "Recomendacion", "Presión competitiva"):
             estilos.append("font-weight: 700;")
+        elif col in ("Más de 2.5 goles", "Ambos marcan: Sí"):
+            # Resaltar en verde las probabilidades que superan el 60%.
+            try:
+                valor = float(str(fila.get(col, "")).replace("%", "").replace(",", "."))
+            except (ValueError, TypeError):
+                valor = np.nan
+            if np.isfinite(valor) and valor > 60:
+                estilos.append("color: #15803d; font-weight: 800;")
+            else:
+                estilos.append("")
         else:
             estilos.append("")
     return estilos
@@ -951,6 +961,8 @@ with tab1:
             "🟢 FIJA: probabilidad principal ≥ 60% y ventaja ≥ 12 puntos. "
             "🔴 CERRADO: margen entre las dos opciones principales ≤ 7 puntos "
             "o ninguna opción supera el 40%. 🟡 INTERMEDIO: los demás casos. "
+            "Los porcentajes de Más de 2.5 goles y Ambos marcan se muestran con %; "
+            "se resaltan en verde cuando superan el 60%. "
             "El Marcador compatible es el marcador exacto más probable que respeta simultáneamente "
             "el 1X2 y los mercados recomendados (Over/Under 2.5 y BTTS). "
             "El marcador modal se conserva como referencia secundaria en la vista completa."
@@ -1101,7 +1113,4 @@ with tab6:
         "presenta como señal contextual y no debe interpretarse como una probabilidad "
         "de ganar ni como una garantía de clasificación o descenso."
     )
-
-
-
 
