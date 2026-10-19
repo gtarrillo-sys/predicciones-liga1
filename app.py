@@ -934,9 +934,10 @@ def estilizar_texto(fila):
             estilos.append("")
     return estilos
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📋 Pronósticos", "🏆 Tabla acumulada", "🥇 Tabla Clausura",
-    "📚 Historial H2H", "🧾 Control de datos", "🔥 Tensión competitiva"
+    "📚 Historial H2H", "🧾 Control de datos", "🔥 Tensión competitiva",
+    "🧪 Backtesting"
 ])
 
 with tab1:
@@ -1113,4 +1114,90 @@ with tab6:
         "presenta como señal contextual y no debe interpretarse como una probabilidad "
         "de ganar ni como una garantía de clasificación o descenso."
     )
+
+with tab7:
+    st.subheader("🧪 Backtesting histórico — evaluación del modelo")
+    st.write(
+        "Esta prueba walk-forward entrena con partidos anteriores en el orden del Excel y evalúa "
+        "el siguiente bloque de partidos. No usa la tabla actual ni resultados posteriores como "
+        "variables predictoras. Para una evaluación estrictamente cronológica, mantén las hojas "
+        "de resultados ordenadas por temporada y jornada; agregar una columna Fecha real mejora "
+        "la validez de la prueba."
+    )
+    st.warning(
+        "La prueba usa una versión base de Poisson basada en goles históricos (localía y ataque/defensa). "
+        "No equivale a validar cada ajuste contextual del pronóstico principal; sirve para medir una línea base."
+    )
+    modo_bt = st.radio("Modo de ejecución", ["⚡ Rápido", "🔬 Completo"], horizontal=True, key="modo_bt_liga")
+    minimo_bt = st.number_input("Partidos mínimos antes de evaluar", min_value=18, max_value=250, value=36, step=9, key="min_bt_liga")
+    paso_bt = 3 if modo_bt == "⚡ Rápido" else 1
+    if st.button("▶ Ejecutar backtesting", type="primary", key="run_bt_liga"):
+        base = historico.copy().reset_index(drop=True)
+        base = base.dropna(subset=["gl", "gv", "local_std", "visita_std"]).reset_index(drop=True)
+        if len(base) <= int(minimo_bt):
+            st.error(f"Hay {len(base)} partidos válidos; se necesitan más de {int(minimo_bt)} para evaluar.")
+        else:
+            indices = list(range(int(minimo_bt), len(base), paso_bt))
+            progreso = st.progress(0.0)
+            estado_bt = st.empty()
+            filas_bt = []
+            global_local = 1.45
+            global_visita = 1.20
+            for n, idx in enumerate(indices):
+                train = base.iloc[:idx].copy()
+                test = base.iloc[idx]
+                # Promedios globales calculados solo con el entrenamiento
+                gl_global = float(train["gl"].mean()) if len(train) else global_local
+                gv_global = float(train["gv"].mean()) if len(train) else global_visita
+                loc_eq, vis_eq = test["local_std"], test["visita_std"]
+                loc_home = train[train["local_std"] == loc_eq]
+                loc_away = train[train["visita_std"] == loc_eq]
+                vis_home = train[train["local_std"] == vis_eq]
+                vis_away = train[train["visita_std"] == vis_eq]
+                # Suavizado hacia la media para equipos con pocos partidos
+                def media_suavizada(serie, prior, peso=4.0):
+                    serie = pd.to_numeric(serie, errors="coerce").dropna()
+                    return float((serie.sum() + peso * prior) / (len(serie) + peso))
+                gf_l = media_suavizada(loc_home["gl"], gl_global)
+                gc_l = media_suavizada(loc_home["gv"], gv_global)
+                gf_v = media_suavizada(vis_away["gv"], gv_global)
+                gc_v = media_suavizada(vis_away["gl"], gl_global)
+                lam_l = float(np.clip((gf_l + gc_v) / 2, .15, 4.5))
+                lam_v = float(np.clip((gf_v + gc_l) / 2, .15, 4.5))
+                maxg = 9
+                mat = np.outer(poisson.pmf(np.arange(maxg), lam_l), poisson.pmf(np.arange(maxg), lam_v))
+                mat = mat / mat.sum() if mat.sum() else mat
+                probs = {"Local": float(np.tril(mat, -1).sum()), "Empate": float(np.trace(mat)), "Visita": float(np.triu(mat, 1).sum())}
+                pred = max(probs, key=probs.get)
+                gl_real, gv_real = int(test["gl"]), int(test["gv"])
+                real = "Local" if gl_real > gv_real else "Visita" if gl_real < gv_real else "Empate"
+                # Brier multicategoría y log loss para el resultado real
+                orden = ["Local", "Empate", "Visita"]
+                brier = sum((probs[k] - (1.0 if k == real else 0.0)) ** 2 for k in orden)
+                p_real = max(probs[real], 1e-12)
+                filas_bt.append({
+                    "N.º histórico": idx + 1, "Local": test.get("local", loc_eq), "Visita": test.get("visita", vis_eq),
+                    "Goles": f"{gl_real}-{gv_real}", "Pronóstico": pred, "Real": real,
+                    "P local %": round(probs["Local"] * 100, 1), "P empate %": round(probs["Empate"] * 100, 1),
+                    "P visita %": round(probs["Visita"] * 100, 1), "Acierto": pred == real,
+                    "Brier": brier, "Log Loss": -np.log(p_real),
+                })
+                if n % 5 == 0 or n == len(indices) - 1:
+                    progreso.progress((n + 1) / len(indices))
+                    estado_bt.text(f"Procesando {n + 1} de {len(indices)} evaluaciones…")
+            res_bt = pd.DataFrame(filas_bt)
+            if not res_bt.empty:
+                exactitud = float(res_bt["Acierto"].mean() * 100)
+                brier_m = float(res_bt["Brier"].mean())
+                logloss_m = float(res_bt["Log Loss"].mean())
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Partidos evaluados", f"{len(res_bt)}")
+                c2.metric("Acierto 1X2", f"{exactitud:.1f}%")
+                c3.metric("Brier medio ↓", f"{brier_m:.3f}")
+                c4.metric("Log Loss medio ↓", f"{logloss_m:.3f}")
+                st.caption("Brier y Log Loss: cuanto más bajos, mejor. La exactitud no evalúa por sí sola la calibración de las probabilidades.")
+                st.dataframe(res_bt, use_container_width=True, hide_index=True)
+                st.download_button("⬇ Descargar resultados del backtesting", res_bt.to_csv(index=False, encoding="utf-8-sig"), "backtesting_liga1.csv", "text/csv", key="download_bt_liga")
+            progreso.progress(1.0)
+            estado_bt.success("Backtesting finalizado.")
 
