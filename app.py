@@ -941,10 +941,10 @@ def estilizar_texto(fila):
             estilos.append("")
     return estilos
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "📋 Pronósticos", "🏆 Tabla acumulada", "🥇 Tabla Clausura",
-    "📚 Historial H2H", "🧾 Control de datos", "🔥 Tensión competitiva",
-    "🧪 Backtesting"
+tab7, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🧪 BACKTESTING", "📋 Pronósticos", "🏆 Tabla acumulada",
+    "🥇 Tabla Clausura", "📚 Historial H2H", "🧾 Control de datos",
+    "🔥 Tensión competitiva"
 ])
 
 with tab1:
@@ -1123,95 +1123,169 @@ with tab6:
     )
 
 with tab7:
-    st.subheader("🧪 Backtesting histórico — evaluación del modelo")
+    st.subheader("🧪 Backtesting histórico — comparación de modelos")
     st.write(
-        "Esta prueba walk-forward ordena los partidos cronológicamente por Fecha cuando está disponible "
-        "y conserva el orden original del Excel como desempate. No usa resultados posteriores como "
-        "variables predictoras."
+        "El Backtesting simula pronósticos cronológicos: para cada partido, el modelo solo "
+        "utiliza resultados anteriores. La primera pestaña permite comparar una referencia "
+        "Poisson con una variante Poisson + Dixon-Coles."
     )
-    st.warning(
-        "La prueba usa una versión base de Poisson basada en goles históricos (localía y ataque/defensa). "
-        "No equivale a validar cada ajuste contextual del pronóstico principal; sirve para medir una línea base."
+    st.info(
+        "La comparación utiliza los mismos partidos y el mismo historial inicial. "
+        "Los factores de contexto de la predicción principal no se incluyen aún en esta comparación, "
+        "porque las tablas/contextos deben reconstruirse históricamente para evitar filtración de información futura."
     )
-    modo_bt = st.radio("Modo de ejecución", ["⚡ Rápido", "🔬 Completo"], horizontal=True, key="modo_bt_liga")
-    minimo_bt = st.number_input("Partidos mínimos antes de evaluar", min_value=18, max_value=250, value=36, step=9, key="min_bt_liga")
+
+    modo_bt = st.radio(
+        "Modo de ejecución", ["⚡ Rápido", "🔬 Completo"],
+        horizontal=True, key="modo_bt_liga"
+    )
+    minimo_bt = st.number_input(
+        "Partidos mínimos antes de evaluar", min_value=18, max_value=250,
+        value=36, step=9, key="min_bt_liga"
+    )
     paso_bt = 3 if modo_bt == "⚡ Rápido" else 1
-    if st.button("▶ Ejecutar backtesting", type="primary", key="run_bt_liga"):
+
+    if "res_bt_liga" not in st.session_state:
+        st.session_state["res_bt_liga"] = None
+    if "resumen_bt_liga" not in st.session_state:
+        st.session_state["resumen_bt_liga"] = None
+
+    if st.button("▶ Ejecutar comparación de modelos", type="primary", key="run_bt_liga"):
         base = historico.copy()
-        # Walk-forward cronológico: Fecha es el criterio principal y el orden
-        # original del Excel se conserva como desempate para partidos del mismo día.
         if "fecha" in base.columns:
             base["_orden_original"] = np.arange(len(base))
             base["_fecha_bt"] = pd.to_datetime(base["fecha"], errors="coerce")
             base = base.sort_values(
                 ["_fecha_bt", "_orden_original"],
-                na_position="last",
-                kind="stable"
+                na_position="last", kind="stable"
             )
         base = base.dropna(subset=["gl", "gv", "local_std", "visita_std"]).reset_index(drop=True)
+
         if len(base) <= int(minimo_bt):
+            st.session_state["res_bt_liga"] = None
+            st.session_state["resumen_bt_liga"] = None
             st.error(f"Hay {len(base)} partidos válidos; se necesitan más de {int(minimo_bt)} para evaluar.")
         else:
             indices = list(range(int(minimo_bt), len(base), paso_bt))
             progreso = st.progress(0.0)
             estado_bt = st.empty()
             filas_bt = []
-            global_local = 1.45
-            global_visita = 1.20
+
+            def media_suavizada_bt(serie, prior, peso=4.0):
+                serie = pd.to_numeric(serie, errors="coerce").dropna()
+                return float((serie.sum() + peso * prior) / (len(serie) + peso))
+
             for n, idx in enumerate(indices):
                 train = base.iloc[:idx].copy()
                 test = base.iloc[idx]
-                # Promedios globales calculados solo con el entrenamiento
-                gl_global = float(train["gl"].mean()) if len(train) else global_local
-                gv_global = float(train["gv"].mean()) if len(train) else global_visita
+                gl_global = float(train["gl"].mean())
+                gv_global = float(train["gv"].mean())
                 loc_eq, vis_eq = test["local_std"], test["visita_std"]
                 loc_home = train[train["local_std"] == loc_eq]
-                loc_away = train[train["visita_std"] == loc_eq]
-                vis_home = train[train["local_std"] == vis_eq]
                 vis_away = train[train["visita_std"] == vis_eq]
-                # Suavizado hacia la media para equipos con pocos partidos
-                def media_suavizada(serie, prior, peso=4.0):
-                    serie = pd.to_numeric(serie, errors="coerce").dropna()
-                    return float((serie.sum() + peso * prior) / (len(serie) + peso))
-                gf_l = media_suavizada(loc_home["gl"], gl_global)
-                gc_l = media_suavizada(loc_home["gv"], gv_global)
-                gf_v = media_suavizada(vis_away["gv"], gv_global)
-                gc_v = media_suavizada(vis_away["gl"], gl_global)
+                vis_home = train[train["local_std"] == vis_eq]
+                loc_away = train[train["visita_std"] == loc_eq]
+
+                gf_l = media_suavizada_bt(loc_home["gl"], gl_global)
+                gc_l = media_suavizada_bt(loc_home["gv"], gv_global)
+                gf_v = media_suavizada_bt(vis_away["gv"], gv_global)
+                gc_v = media_suavizada_bt(vis_away["gl"], gl_global)
                 lam_l = float(np.clip((gf_l + gc_v) / 2, .15, 4.5))
                 lam_v = float(np.clip((gf_v + gc_l) / 2, .15, 4.5))
+
                 maxg = 9
-                mat = np.outer(poisson.pmf(np.arange(maxg), lam_l), poisson.pmf(np.arange(maxg), lam_v))
-                mat = mat / mat.sum() if mat.sum() else mat
-                probs = {"Local": float(np.tril(mat, -1).sum()), "Empate": float(np.trace(mat)), "Visita": float(np.triu(mat, 1).sum())}
-                pred = max(probs, key=probs.get)
+                rango_goles = np.arange(maxg)
+                mat_pois = np.outer(poisson.pmf(rango_goles, lam_l), poisson.pmf(rango_goles, lam_v))
+                mat_pois = mat_pois / mat_pois.sum() if mat_pois.sum() else mat_pois
+                mat_dc = matriz_dixon_coles(lam_l, lam_v, rho=-0.08, max_goles=maxg)
+
                 gl_real, gv_real = int(test["gl"]), int(test["gv"])
                 real = "Local" if gl_real > gv_real else "Visita" if gl_real < gv_real else "Empate"
-                # Brier multicategoría y log loss para el resultado real
                 orden = ["Local", "Empate", "Visita"]
-                brier = sum((probs[k] - (1.0 if k == real else 0.0)) ** 2 for k in orden)
-                p_real = max(probs[real], 1e-12)
-                filas_bt.append({
-                    "N.º histórico": idx + 1, "Local": test.get("local", loc_eq), "Visita": test.get("visita", vis_eq),
-                    "Goles": f"{gl_real}-{gv_real}", "Pronóstico": pred, "Real": real,
-                    "P local %": round(probs["Local"] * 100, 1), "P empate %": round(probs["Empate"] * 100, 1),
-                    "P visita %": round(probs["Visita"] * 100, 1), "Acierto": pred == real,
-                    "Brier": brier, "Log Loss": -np.log(p_real),
-                })
+                fila = {
+                    "N.º histórico": idx + 1,
+                    "Fecha": pd.to_datetime(test.get("fecha"), errors="coerce"),
+                    "Local": test.get("local", loc_eq),
+                    "Visita": test.get("visita", vis_eq),
+                    "Goles": f"{gl_real}-{gv_real}",
+                    "Real": real,
+                    "λ local": round(lam_l, 3),
+                    "λ visita": round(lam_v, 3),
+                }
+                for nombre, mat in [("Poisson", mat_pois), ("Dixon-Coles", mat_dc)]:
+                    probs = {
+                        "Local": float(np.tril(mat, -1).sum()),
+                        "Empate": float(np.trace(mat)),
+                        "Visita": float(np.triu(mat, 1).sum()),
+                    }
+                    pred = max(probs, key=probs.get)
+                    brier = sum((probs[k] - (1.0 if k == real else 0.0)) ** 2 for k in orden)
+                    logloss = -np.log(max(probs[real], 1e-12))
+                    fila[f"{nombre} — Pronóstico"] = pred
+                    fila[f"{nombre} — Acierto"] = pred == real
+                    fila[f"{nombre} — P local %"] = round(probs["Local"] * 100, 1)
+                    fila[f"{nombre} — P empate %"] = round(probs["Empate"] * 100, 1)
+                    fila[f"{nombre} — P visita %"] = round(probs["Visita"] * 100, 1)
+                    fila[f"{nombre} — Brier"] = brier
+                    fila[f"{nombre} — Log Loss"] = logloss
+
+                filas_bt.append(fila)
                 if n % 5 == 0 or n == len(indices) - 1:
                     progreso.progress((n + 1) / len(indices))
                     estado_bt.text(f"Procesando {n + 1} de {len(indices)} evaluaciones…")
+
             res_bt = pd.DataFrame(filas_bt)
-            if not res_bt.empty:
-                exactitud = float(res_bt["Acierto"].mean() * 100)
-                brier_m = float(res_bt["Brier"].mean())
-                logloss_m = float(res_bt["Log Loss"].mean())
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Partidos evaluados", f"{len(res_bt)}")
-                c2.metric("Acierto 1X2", f"{exactitud:.1f}%")
-                c3.metric("Brier medio ↓", f"{brier_m:.3f}")
-                c4.metric("Log Loss medio ↓", f"{logloss_m:.3f}")
-                st.caption("Brier y Log Loss: cuanto más bajos, mejor. La exactitud no evalúa por sí sola la calibración de las probabilidades.")
-                st.dataframe(res_bt, use_container_width=True, hide_index=True)
-                st.download_button("⬇ Descargar resultados del backtesting", res_bt.to_csv(index=False, encoding="utf-8-sig"), "backtesting_liga1.csv", "text/csv", key="download_bt_liga")
+            resumen = []
+            for nombre in ["Poisson", "Dixon-Coles"]:
+                resumen.append({
+                    "Modelo": nombre,
+                    "Partidos evaluados": len(res_bt),
+                    "Acierto 1X2 (%)": round(res_bt[f"{nombre} — Acierto"].mean() * 100, 2),
+                    "Brier medio ↓": round(res_bt[f"{nombre} — Brier"].mean(), 4),
+                    "Log Loss medio ↓": round(res_bt[f"{nombre} — Log Loss"].mean(), 4),
+                })
+            st.session_state["res_bt_liga"] = res_bt
+            st.session_state["resumen_bt_liga"] = pd.DataFrame(resumen)
             progreso.progress(1.0)
-            estado_bt.success("Backtesting finalizado.")
+            estado_bt.success("Comparación de backtesting finalizada. Los resultados quedan guardados en esta sesión.")
+
+    res_bt = st.session_state.get("res_bt_liga")
+    resumen_bt = st.session_state.get("resumen_bt_liga")
+    if isinstance(res_bt, pd.DataFrame) and not res_bt.empty and isinstance(resumen_bt, pd.DataFrame):
+        st.markdown("### 📊 Comparación general")
+        st.dataframe(resumen_bt, use_container_width=True, hide_index=True)
+        mejor_brier = resumen_bt.loc[resumen_bt["Brier medio ↓"].idxmin(), "Modelo"]
+        mejor_logloss = resumen_bt.loc[resumen_bt["Log Loss medio ↓"].idxmin(), "Modelo"]
+        mejor_acierto = resumen_bt.loc[resumen_bt["Acierto 1X2 (%)"].idxmax(), "Modelo"]
+        st.write(
+            f"**Lectura automática:** mayor acierto: **{mejor_acierto}**; "
+            f"menor Brier: **{mejor_brier}**; menor Log Loss: **{mejor_logloss}**. "
+            "Si las métricas discrepan, no elijas solo por el porcentaje de acierto."
+        )
+
+        st.markdown("### 🧩 Matriz de confusión — modelo Dixon-Coles")
+        clases = ["Local", "Empate", "Visita"]
+        matriz_conf = pd.crosstab(
+            pd.Categorical(res_bt["Real"], categories=clases),
+            pd.Categorical(res_bt["Dixon-Coles — Pronóstico"], categories=clases),
+            rownames=["Resultado real"], colnames=["Pronóstico"], dropna=False
+        )
+        st.dataframe(matriz_conf, use_container_width=True)
+        acierto_clase = []
+        for clase in clases:
+            subset = res_bt[res_bt["Real"] == clase]
+            acierto_clase.append({
+                "Resultado real": clase,
+                "Partidos": len(subset),
+                "Aciertos Dixon-Coles": int((subset["Dixon-Coles — Pronóstico"] == clase).sum()),
+                "% acierto por clase": round((subset["Dixon-Coles — Pronóstico"] == clase).mean() * 100, 1) if len(subset) else np.nan,
+            })
+        st.markdown("### 🎯 Acierto por resultado real")
+        st.dataframe(pd.DataFrame(acierto_clase), use_container_width=True, hide_index=True)
+        st.markdown("### 📋 Detalle partido por partido")
+        st.dataframe(res_bt, use_container_width=True, hide_index=True)
+        st.download_button(
+            "⬇ Descargar resultados del backtesting",
+            res_bt.to_csv(index=False, encoding="utf-8-sig"),
+            "backtesting_liga1_comparacion.csv", "text/csv", key="download_bt_liga"
+        )
