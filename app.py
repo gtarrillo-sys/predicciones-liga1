@@ -7,6 +7,7 @@ Versión revisada:
 - Filtra los partidos históricos anteriores a cada encuentro usando la fecha real.
 - Recalcula K/L/M/N cronológicamente y no depende de referencias Prom_* desplazadas del Excel.
 - Incorpora forma, localía, xG, tablas, altitud, descanso y contexto competitivo.
+- Aplica realmente los factores contextuales después de la lambda base, evitando ajustes calculados pero no utilizados.
 - Muestra resaltado en las letras, no en el fondo de las filas.
 - Añade una lectura orientativa de presión competitiva: título/puestos internacionales,
   zona media y lucha por evitar el descenso.
@@ -589,7 +590,16 @@ def obtener_contexto(datos, partido):
         h = h2h[
             ((h2h["local_std"] == eq_loc) & (h2h["visita_std"] == eq_vis)) |
             ((h2h["local_std"] == eq_vis) & (h2h["visita_std"] == eq_loc))
-        ].tail(8).copy()
+        ].copy()
+
+        # Si Historial_H2H tiene Fecha, usar solo enfrentamientos previos.
+        # Esto evita fuga temporal al evaluar partidos históricos.
+        if "fecha" in h.columns and pd.notna(partido.get("fecha")):
+            fechas_h2h = pd.to_datetime(h["fecha"], errors="coerce")
+            fecha_obj = pd.Timestamp(partido.get("fecha")).normalize()
+            h = h[fechas_h2h.notna() & (fechas_h2h.dt.normalize() < fecha_obj)].copy()
+
+        h = h.tail(8).copy()
         if not h.empty:
             bal = []
             for _, r in h.iterrows():
@@ -668,15 +678,12 @@ def pronosticar_partido(datos, partido):
         lambda_loc = ((ml["gf_local"] + mv["ga_visita"]) / 2) if not np.isfinite(lambda_loc) else lambda_loc
         lambda_vis = ((mv["gf_visita"] + ml["ga_local"]) / 2) if not np.isfinite(lambda_vis) else lambda_vis
 
-    # Ajustes contextuales pequeños que NO reemplazan la fórmula Excel.
-    # La altitud no se reaplica aquí para evitar doble conteo.
-    if contexto.get("Descanso local", 7) < 4:
-        lambda_loc *= .95
-    if contexto.get("Descanso visita", 7) < 4:
-        lambda_vis *= .95
-    if APLICAR_MICROAJUSTE_PRESION and contexto.get("Índice presión (0-1)", 0) >= .80:
-        lambda_loc *= 1.015
-        lambda_vis *= 1.015
+    # Ajustes contextuales pequeños posteriores a la fórmula Excel.
+    # La altitud NO se reaplica: ya está incorporada en lambda mediante J.
+    # Aquí se aplican los factores calculados por obtener_contexto: clima,
+    # cancha, descanso, horario, H2H y, opcionalmente, presión.
+    lambda_loc *= f_loc
+    lambda_vis *= f_vis
 
     lambda_loc = float(np.clip(lambda_loc, .20, 4.0))
     lambda_vis = float(np.clip(lambda_vis, .20, 4.0))
@@ -1118,11 +1125,9 @@ with tab6:
 with tab7:
     st.subheader("🧪 Backtesting histórico — evaluación del modelo")
     st.write(
-        "Esta prueba walk-forward entrena con partidos anteriores en el orden del Excel y evalúa "
-        "el siguiente bloque de partidos. No usa la tabla actual ni resultados posteriores como "
-        "variables predictoras. Para una evaluación estrictamente cronológica, mantén las hojas "
-        "de resultados ordenadas por temporada y jornada; agregar una columna Fecha real mejora "
-        "la validez de la prueba."
+        "Esta prueba walk-forward ordena los partidos cronológicamente por Fecha cuando está disponible "
+        "y conserva el orden original del Excel como desempate. No usa resultados posteriores como "
+        "variables predictoras."
     )
     st.warning(
         "La prueba usa una versión base de Poisson basada en goles históricos (localía y ataque/defensa). "
@@ -1132,7 +1137,17 @@ with tab7:
     minimo_bt = st.number_input("Partidos mínimos antes de evaluar", min_value=18, max_value=250, value=36, step=9, key="min_bt_liga")
     paso_bt = 3 if modo_bt == "⚡ Rápido" else 1
     if st.button("▶ Ejecutar backtesting", type="primary", key="run_bt_liga"):
-        base = historico.copy().reset_index(drop=True)
+        base = historico.copy()
+        # Walk-forward cronológico: Fecha es el criterio principal y el orden
+        # original del Excel se conserva como desempate para partidos del mismo día.
+        if "fecha" in base.columns:
+            base["_orden_original"] = np.arange(len(base))
+            base["_fecha_bt"] = pd.to_datetime(base["fecha"], errors="coerce")
+            base = base.sort_values(
+                ["_fecha_bt", "_orden_original"],
+                na_position="last",
+                kind="stable"
+            )
         base = base.dropna(subset=["gl", "gv", "local_std", "visita_std"]).reset_index(drop=True)
         if len(base) <= int(minimo_bt):
             st.error(f"Hay {len(base)} partidos válidos; se necesitan más de {int(minimo_bt)} para evaluar.")
@@ -1200,4 +1215,3 @@ with tab7:
                 st.download_button("⬇ Descargar resultados del backtesting", res_bt.to_csv(index=False, encoding="utf-8-sig"), "backtesting_liga1.csv", "text/csv", key="download_bt_liga")
             progreso.progress(1.0)
             estado_bt.success("Backtesting finalizado.")
-
