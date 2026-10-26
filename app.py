@@ -199,8 +199,6 @@ def cargar_excel_completo(bytes_excel):
     datos["formulas_original"] = originales["Formulas"]
     datos["hojas_disponibles"] = disponibles
 
-    # Promedios globales: buscar etiquetas; si no se encuentran, calcularlos
-    # desde resultados históricos en vez de depender de números de fila fijos.
     prior_local, prior_visita = np.nan, np.nan
     formulas = originales["Formulas"]
     if not formulas.empty and formulas.shape[1] >= 4:
@@ -293,8 +291,6 @@ def construir_historico(datos):
         df["gl"] = pd.to_numeric(df["gl"], errors="coerce")
         df["gv"] = pd.to_numeric(df["gv"], errors="coerce")
         df = df.dropna(subset=["gl", "gv", "local_std", "visita_std"])
-        # xG se conserva únicamente cuando existe como dato real.
-        # No se sustituye por goles reales.
         for xg in ("xg_local", "xg_visita"):
             if xg not in df.columns:
                 df[xg] = np.nan
@@ -321,7 +317,7 @@ def fila_equipo_tabla(tabla, equipo):
     return None if z.empty else z.iloc[0]
 
 # ---------------------------------------------------------------------
-# 4. Contexto competitivo: puestos, urgencia y tensión de final de torneo
+# 4. Contexto competitivo
 # ---------------------------------------------------------------------
 def objetivo_equipo(fila, total_equipos=18):
     if fila is None:
@@ -350,15 +346,10 @@ def objetivo_equipo(fila, total_equipos=18):
     return "Objetivo por confirmar"
 
 def urgencia_equipo(fila, total_equipos=18):
-    """
-    Índice descriptivo de 0 a 1. No representa una probabilidad.
-    Sube en los extremos de la tabla y cerca de las zonas objetivo.
-    """
     if fila is None:
         return 0.25
     situacion = str(fila.get("situacion_actual", "")).lower()
     rango = a_float(fila.get("rango", fila.get("pos")))
-    pts = a_float(fila.get("pts"))
     pj = a_float(fila.get("pj"))
     if not np.isfinite(rango):
         return 0.25
@@ -379,7 +370,6 @@ def urgencia_equipo(fila, total_equipos=18):
     else:
         base = 0.30
 
-    # Con pocos partidos por jugar, la presión de los objetivos suele aumentar.
     pj_max = 34.0
     restantes = max(0.0, pj_max - pj) if np.isfinite(pj) else 5.0
     factor_cierre = float(np.clip((8.0 - restantes) / 8.0, 0.0, 1.0))
@@ -408,10 +398,9 @@ def presion_partido(fila_l, fila_v):
     }
 
 # ---------------------------------------------------------------------
-# 5. Rendimiento de equipo con resultados, xG, tablas y forma
+# 5. Rendimiento de equipo
 # ---------------------------------------------------------------------
 def filtrar_historico_previo(fecha_partido=None, jornada_partido=None):
-    """Usa fecha real como corte principal. Nunca usa partidos del mismo día."""
     h = historico.copy()
     if h.empty:
         return h
@@ -419,7 +408,6 @@ def filtrar_historico_previo(fecha_partido=None, jornada_partido=None):
     if fecha_partido is not None and pd.notna(fecha_partido) and "fecha" in h.columns:
         fecha_obj = pd.Timestamp(fecha_partido).normalize()
         fechas = pd.to_datetime(h["fecha"], errors="coerce")
-        # Solo registros con fecha conocida y estrictamente anteriores.
         h = h[fechas.notna() & (fechas.dt.normalize() < fecha_obj)].copy()
     elif jornada_partido is not None and pd.notna(jornada_partido):
         try:
@@ -429,9 +417,7 @@ def filtrar_historico_previo(fecha_partido=None, jornada_partido=None):
             pass
     return h
 
-
 def promedios_excel_equipo(equipo, fecha_partido=None, jornada_partido=None):
-    """Reproduce las cuatro primeras fórmulas de Resultados_Clausura."""
     eq = normalizar_nombre(equipo)
     h = filtrar_historico_previo(fecha_partido, jornada_partido)
 
@@ -444,4 +430,107 @@ def promedios_excel_equipo(equipo, fecha_partido=None, jornada_partido=None):
 
     return {
         "K": float(local["gl"].mean()) if not local.empty else np.nan,
-        "L": float(local["gv"].mean()) if not local.empty else np.
+        "L": float(local["gv"].mean()) if not local.empty else np.nan,
+        "M": float(visita["gv"].mean()) if not visita.empty else np.nan,
+        "N": float(visita["gl"].mean()) if not visita.empty else np.nan,
+        "n_local": len(local),
+        "n_visita": len(visita),
+    }
+
+def factores_altitud_excel(altitud):
+    alt = a_float(altitud)
+    if not np.isfinite(alt):
+        return 1.00, 1.00
+    f_local = 1.20 if alt >= 2000 else (1.10 if alt >= 1000 else 1.00)
+    f_visita = 0.75 if alt >= 2000 else (0.85 if alt >= 1000 else 1.00)
+    return f_local, f_visita
+
+def lambdas_clausura_excel(local, visita, fecha_partido=None, jornada_partido=None,
+                           altitud_excel_j=np.nan):
+    ml = promedios_excel_equipo(local, fecha_partido, jornada_partido)
+    mv = promedios_excel_equipo(visita, fecha_partido, jornada_partido)
+    d2, d6 = datos["prior_local"], datos["prior_visita"]
+    f_local, f_visita = factores_altitud_excel(altitud_excel_j)
+
+    lam_l = (
+        np.nan
+        if not all(np.isfinite([ml["K"], mv["N"], d2])) or d2 <= 0
+        else (ml["K"] * mv["N"] / d2) * f_local
+    )
+    lam_v = (
+        np.nan
+        if not all(np.isfinite([mv["M"], ml["L"], d6])) or d6 <= 0
+        else (mv["M"] * ml["L"] / d6) * f_visita
+    )
+
+    return {
+        "lambda_local": lam_l,
+        "lambda_visita": lam_v,
+        "local": ml,
+        "visita": mv,
+        "D2": d2,
+        "D6": d6,
+        "altitud_excel_j": a_float(altitud_excel_j),
+        "factor_altitud_local": f_local,
+        "factor_altitud_visita": f_visita,
+    }
+
+def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
+    eq = normalizar_nombre(equipo)
+    h = filtrar_historico_previo(fecha_partido, jornada_partido)
+    if h.empty:
+        pl, pv = datos["prior_local"], datos["prior_visita"]
+        return {"gf": pl, "ga": pv, "gf_local": pl, "ga_local": pv,
+                "gf_visita": pv, "ga_visita": pl, "n": 0, "forma": .5}
+
+    loc = h[h["local_std"] == eq].copy()
+    vis = h[h["visita_std"] == eq].copy()
+    recientes = pd.concat([
+        loc.assign(gf=loc["gl"], ga=loc["gv"]),
+        vis.assign(gf=vis["gv"], ga=vis["gl"])
+    ], ignore_index=True)
+    if "fecha" in recientes.columns:
+        recientes = recientes.sort_values("fecha")
+    recientes = recientes.tail(5)
+    forma = .5
+    if not recientes.empty:
+        puntos = np.where(recientes["gf"] > recientes["ga"], 3,
+                          np.where(recientes["gf"] == recientes["ga"], 1, 0))
+        forma = float(np.mean(puntos) / 3.0)
+
+    gf_local = float(loc["gl"].mean()) if not loc.empty else datos["prior_local"]
+    ga_local = float(loc["gv"].mean()) if not loc.empty else datos["prior_visita"]
+    gf_visita = float(vis["gv"].mean()) if not vis.empty else datos["prior_visita"]
+    ga_visita = float(vis["gl"].mean()) if not vis.empty else datos["prior_local"]
+    return {
+        "gf": max(.2, np.nanmean([gf_local, gf_visita])),
+        "ga": max(.2, np.nanmean([ga_local, ga_visita])),
+        "gf_local": max(.2, gf_local), "ga_local": max(.2, ga_local),
+        "gf_visita": max(.2, gf_visita), "ga_visita": max(.2, ga_visita),
+        "n": len(loc) + len(vis), "forma": forma,
+    }
+
+# ---------------------------------------------------------------------
+# 6. Factores contextuales
+# ---------------------------------------------------------------------
+APLICAR_MICROAJUSTE_PRESION = False
+
+def obtener_contexto(datos, partido):
+    loc, vis = limpio(partido.get("local")), limpio(partido.get("visita"))
+    eq_loc, eq_vis = normalizar_nombre(loc), normalizar_nombre(vis)
+    f_loc, f_vis, rho = 1.0, 1.0, -.08
+    geo = datos["Data_Geografica"]
+
+    def info_geo(eq):
+        if geo.empty or "equipo_std" not in geo.columns:
+            return None
+        z = geo[geo["equipo_std"] == eq]
+        return None if z.empty else z.iloc[0]
+
+    il, iv = info_geo(eq_loc), info_geo(eq_vis)
+    alt_l = a_float(il.get("altitud_msnm")) if il is not None else a_float(partido.get("altitud_local"), 0)
+    alt_v = a_float(iv.get("altitud_msnm")) if iv is not None else a_float(partido.get("altitud_visita"), 0)
+    delta = alt_l - alt_v if np.isfinite(alt_l) and np.isfinite(alt_v) else np.nan
+
+    clima_l = str(il.get("tipo_clima", "")).lower() if il is not None else ""
+    clima_v = str(iv.get("tipo_clima", "")).lower() if iv is
