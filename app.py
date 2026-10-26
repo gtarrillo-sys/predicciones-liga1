@@ -1575,4 +1575,9 @@ def pronosticar_partido(datos, partido):
 
         "D2": round(excel["D2"], 4), "D6": round(excel["D6"], 4),
 
+        "Altitud usada por fórmula (J)": excel["altitud_excel_j"],
+        **contexto,
+    }
+      "D2": round(excel["D2"], 4), "D6": round(excel["D6"], 4),
+
         "Altitud usada por fórmula (J)": 
