@@ -1285,12 +1285,17 @@ def obtener_contexto(datos, partido):
                 rho = -.12
 
 
+
     fila_l = fila_equipo_tabla(tabla_acumulada, loc)
+
     fila_v = fila_equipo_tabla(tabla_acumulada, vis)
+
     presion = presion_partido(fila_l, fila_v)
 
 
+
     # Presión: ajuste pequeño y simétrico al nivel de goles esperados.
+
     # No se fuerza a que un equipo "deba ganar"; la incertidumbre se comunica.
 
     if APLICAR_MICROAJUSTE_PRESION and presion["Índice presión (0-1)"] >= .80:
@@ -1298,6 +1303,7 @@ def obtener_contexto(datos, partido):
         f_loc *= 1.015
 
         f_vis *= 1.015
+
 
 
     return (
@@ -1322,6 +1328,8 @@ def obtener_contexto(datos, partido):
 
     )
 
+
+
 def matriz_dixon_coles(lambda_loc, lambda_vis, rho=-.08, max_goles=9):
 
     matriz = np.zeros((max_goles, max_goles), dtype=float)
@@ -1335,8 +1343,11 @@ def matriz_dixon_coles(lambda_loc, lambda_vis, rho=-.08, max_goles=9):
             tau = 1.0
 
             if i == 0 and j == 0: tau = 1 - lambda_loc * lambda_vis * rho
+
             elif i == 1 and j == 0: tau = 1 + lambda_vis * rho
+
             elif i == 0 and j == 1: tau = 1 + lambda_loc * rho
+
             elif i == 1 and j == 1: tau = 1 - rho
 
             matriz[i, j] = max(0.0, p * tau)
@@ -1346,18 +1357,25 @@ def matriz_dixon_coles(lambda_loc, lambda_vis, rho=-.08, max_goles=9):
     return matriz / total if total > 0 else matriz
 
 
+
 # ---------------------------------------------------------------------
+
 # 7. Pronóstico de partido
+
 # ---------------------------------------------------------------------
 
 def pronosticar_partido(datos, partido):
 
     loc, vis = limpio(partido.get("local")), limpio(partido.get("visita"))
+
     fecha = partido.get("fecha")
+
     jornada_num = partido.get("jornada_num")
 
 
+
     f_loc, f_vis, rho, contexto = obtener_contexto(datos, partido)
+
 
 
     # Metodología principal: promedios de goles y factores de altitud.
@@ -1372,7 +1390,9 @@ def pronosticar_partido(datos, partido):
     )
 
 
+
     lambda_loc = excel["lambda_local"]
+
     lambda_vis = excel["lambda_visita"]
 
 
@@ -1382,48 +1402,84 @@ def pronosticar_partido(datos, partido):
     if not np.isfinite(lambda_loc) or not np.isfinite(lambda_vis):
 
         ml = metricas_equipo(datos, loc, fecha, jornada_num)
+
         mv = metricas_equipo(datos, vis, fecha, jornada_num)
 
         lambda_loc = ((ml["gf_local"] + mv["ga_visita"]) / 2) if not np.isfinite(lambda_loc) else lambda_loc
+
         lambda_vis = ((mv["gf_visita"] + ml["ga_local"]) / 2) if not np.isfinite(lambda_vis) else lambda_vis
 
+
+
     # Ajustes contextuales pequeños posteriores a la fórmula Excel.
+
     # La altitud NO se reaplica: ya está incorporada en lambda mediante J.
+
     # Aquí se aplican los factores calculados por obtener_contexto: clima,
+
     # cancha, descanso, horario, H2H y, opcionalmente, presión.
 
     lambda_loc *= f_loc
+
     lambda_vis *= f_vis
 
+
+
     lambda_loc = float(np.clip(lambda_loc, .20, 4.0))
+
     lambda_vis = float(np.clip(lambda_vis, .20, 4.0))
 
 
+
     matriz = matriz_dixon_coles(lambda_loc, lambda_vis, rho)
+
     p_local = float(np.tril(matriz, -1).sum() * 100)
+
     p_empate = float(np.diag(matriz).sum() * 100)
+
     p_visita = float(np.triu(matriz, 1).sum() * 100)
+
     p_over = float(sum(matriz[i, j] for i in range(len(matriz)) for j in range(len(matriz)) if i + j >= 3) * 100)
+
     p_under = 100 - p_over
+
     p_btts = float(matriz[1:, 1:].sum() * 100)
 
+
+
     i_modal, j_modal = np.unravel_index(np.argmax(matriz), matriz.shape)
+
     probs = {"Local": p_local, "Empate": p_empate, "Visita": p_visita}
+
     ganador = max(probs, key=probs.get)
+
     orden = sorted(probs.values(), reverse=True)
+
     margen = orden[0] - orden[1]
 
+
+
     # -----------------------------------------------------------------
+
     # Marcador compatible
+
     # -----------------------------------------------------------------
+
     # No basta con condicionar al 1X2. El marcador mostrado debe ser
+
     # compatible también con los mercados que el sistema está recomendando.
+
     #
+
     # Ejemplo:
+
     #   Local + Over 2.5 + BTTS -> 3-0 NO es compatible.
+
     #   Local + Over 2.5 + BTTS -> 2-1 sí es compatible.
 
     mascara = np.zeros_like(matriz)
+
+
 
     for i in range(matriz.shape[0]):
 
@@ -1441,6 +1497,8 @@ def pronosticar_partido(datos, partido):
 
                 ok = i == j
 
+
+
             # Solo condicionamos el mercado si forma parte de la
 
             # recomendación automática.
@@ -1453,13 +1511,19 @@ def pronosticar_partido(datos, partido):
 
                 ok = ok and (i + j <= 2)
 
+
+
             if p_btts >= 55:
 
                 ok = ok and (i >= 1 and j >= 1)
 
+
+
             if ok:
 
                 mascara[i, j] = matriz[i, j]
+
+
 
     if mascara.sum() > 0:
 
@@ -1483,6 +1547,8 @@ def pronosticar_partido(datos, partido):
 
         i_pron, j_pron = np.unravel_index(np.argmax(mascara), mascara.shape)
 
+
+
     criterios_marcador = ["1X2"]
 
     if p_over >= 55:
@@ -1497,6 +1563,8 @@ def pronosticar_partido(datos, partido):
 
         criterios_marcador.append("BTTS")
 
+
+
     if max(probs.values()) >= 60 and margen >= 12:
 
         estado, senal = "FIJA", "🟢"
@@ -1509,6 +1577,8 @@ def pronosticar_partido(datos, partido):
 
         estado, senal = "INTERMEDIO", "🟡"
 
+
+
     recomendacion = (
 
         f"{ganador} (confianza alta)" if estado == "FIJA" else
@@ -1520,32 +1590,53 @@ def pronosticar_partido(datos, partido):
     )
 
     if p_over >= 55:
+
         recomendacion += " | Más de 2.5 goles"
+
     elif p_under >= 58:
+
         recomendacion += " | Menos de 2.5 goles"
 
     if p_btts >= 55:
 
         recomendacion += " | Ambos marcan"
 
+
+
     dia = limpio(partido.get("dia")) or (pd.Timestamp(fecha).day_name() if pd.notna(fecha) else "Por definir")
+
     dia = {"Monday":"Lunes","Tuesday":"Martes","Wednesday":"Miércoles","Thursday":"Jueves","Friday":"Viernes","Saturday":"Sábado","Sunday":"Domingo"}.get(dia, dia)
+
+
 
     return {
 
         "Señal": senal, "Estado": estado, "Día": dia or "Por definir",
+
         "Hora": parsear_hora(partido.get("hora")), "Local": loc, "Visita": vis,
+
         "λ Local": round(lambda_loc, 2), "λ Visita": round(lambda_vis, 2),
+
         "% Local": round(p_local, 1), "% Empate": round(p_empate, 1), "% Visita": round(p_visita, 1),
+
         "Más de 2.5 goles": f"{p_over:.1f}%", "Menos de 2.5 goles": f"{p_under:.1f}%", "Ambos marcan: Sí": f"{p_btts:.1f}%",
+
         "Marcador compatible": f"{i_pron} - {j_pron}",
+
         "Marcador modal": f"{i_modal} - {j_modal}",
+
         "Pronóstico 1X2": ganador, "Recomendacion": recomendacion,
+
         "Prob. principal": round(max(probs.values()), 1), "Margen 1X2": round(margen, 1),
+
         "Prom_GF_Local": round(excel["local"]["K"], 3) if np.isfinite(excel["local"]["K"]) else np.nan,
+
         "Prom_GC_Local": round(excel["local"]["L"], 3) if np.isfinite(excel["local"]["L"]) else np.nan,
+
         "Prom_GF_Visita": round(excel["visita"]["M"], 3) if np.isfinite(excel["visita"]["M"]) else np.nan,
+
         "Prom_GC_Visita": round(excel["visita"]["N"], 3) if np.isfinite(excel["visita"]["N"]) else np.nan,
+
                 "D2": round(excel["D2"], 4) if np.isfinite(excel["D2"]) else np.nan,
         "D6": round(excel["D6"], 4) if np.isfinite(excel["D6"]) else np.nan,
         "λ Local base goles": round(excel["lambda_local_goles"], 2) if np.isfinite(excel["lambda_local_goles"]) else np.nan,
@@ -1638,11 +1729,14 @@ else:
             columnas_principales = [
                 "Señal", "Estado", "Día", "Hora", "Local", "Visita",
                 "% Local", "% Empate", "% Visita", "Pronóstico 1X2",
-                "Marcador compatible", "Marcador modal", "Más de 2.5 goles",
+                "Marcador compatible", "Más de 2.5 goles",
                 "Menos de 2.5 goles", "Ambos marcan: Sí", "Recomendacion",
             ]
-            columnas = [c for c in columnas_principales if c in df_resultados.columns]
-            columnas += [c for c in df_resultados.columns if c not in columnas]
+            # El marcador modal se conserva internamente para métricas de backtesting,
+            # pero se elimina de la vista principal y del CSV de pronósticos.
+            df_vista = df_resultados.drop(columns=["Marcador modal"], errors="ignore")
+            columnas = [c for c in columnas_principales if c in df_vista.columns]
+            columnas += [c for c in df_vista.columns if c not in columnas]
 
             def color_texto(valor):
                 texto = str(valor).upper()
@@ -1654,13 +1748,25 @@ else:
                     return "color: #b45309; font-weight: 700;"
                 return ""
 
-            # Resaltar letras de las señales, no el fondo de las celdas.
-            styler = df_resultados[columnas].style
+            def resaltar_probabilidad(valor):
+                # Resalta solo porcentajes estrictamente superiores a 59%.
+                try:
+                    numero = float(str(valor).replace("%", "").strip())
+                except (TypeError, ValueError):
+                    return ""
+                if numero > 59:
+                    return "color: #15803d; font-weight: 700;"
+                return ""
+
+            # Resaltar texto, no el fondo: señales y probabilidades > 59%.
+            styler = df_vista[columnas].style
             for col in [c for c in ["Señal", "Estado", "Pronóstico 1X2"] if c in columnas]:
                 styler = styler.map(color_texto, subset=[col])
+            for col in [c for c in ["% Local", "% Empate", "% Visita", "Prob. principal"] if c in columnas]:
+                styler = styler.map(resaltar_probabilidad, subset=[col])
             st.dataframe(styler, use_container_width=True, hide_index=True)
 
-            csv = df_resultados.to_csv(index=False).encode("utf-8-sig")
+            csv = df_vista.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 "Descargar pronósticos en CSV",
                 data=csv,
@@ -1841,10 +1947,11 @@ with st.expander("📈 Backtesting: evaluación con partidos ya jugados", expand
                     use_container_width=True, hide_index=True
                 )
                 st.subheader("Detalle de partidos")
-                st.dataframe(df_ok, use_container_width=True, hide_index=True)
+                df_bt_vista = df_ok.drop(columns=["Marcador modal"], errors="ignore")
+                st.dataframe(df_bt_vista, use_container_width=True, hide_index=True)
                 st.download_button(
                     "Descargar resultados del backtesting (CSV)",
-                    data=df_ok.to_csv(index=False).encode("utf-8-sig"),
+                    data=df_bt_vista.to_csv(index=False).encode("utf-8-sig"),
                     file_name="backtesting_liga1.csv",
                     mime="text/csv",
                     key="download_backtesting",
