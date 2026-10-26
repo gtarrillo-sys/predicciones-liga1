@@ -67,25 +67,16 @@ st.set_page_config(
 
 
 # ---------------------------------------------------------------------
-
 # Estilo: fondos neutros; colores solo en texto/señales/estados
-
 # ---------------------------------------------------------------------
 
 st.markdown("""
-
 <style>
-
     .block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
-
     div[data-testid="stDataFrame"] {width: 100%;}
-
     div[data-testid="stDataFrame"] th {font-weight: 700 !important;}
-
     .small-note {font-size: .88rem; color: #6b7280;}
-
 </style>
-
 """, unsafe_allow_html=True)
 
 
@@ -1617,9 +1608,9 @@ def pronosticar_partido(datos, partido):
 
         "λ Local": round(lambda_loc, 2), "λ Visita": round(lambda_vis, 2),
 
-        "% Local": round(p_local, 1), "% Empate": round(p_empate, 1), "% Visita": round(p_visita, 1),
+        "% Local": round(p_local, 2), "% Empate": round(p_empate, 2), "% Visita": round(p_visita, 2),
 
-        "Más de 2.5 goles": f"{p_over:.1f}%", "Menos de 2.5 goles": f"{p_under:.1f}%", "Ambos marcan: Sí": f"{p_btts:.1f}%",
+        "Más de 2.5 goles": f"{p_over:.2f}%", "Menos de 2.5 goles": f"{p_under:.2f}%", "Ambos marcan: Sí": f"{p_btts:.2f}%",
 
         "Marcador compatible": f"{i_pron} - {j_pron}",
 
@@ -1627,7 +1618,7 @@ def pronosticar_partido(datos, partido):
 
         "Pronóstico 1X2": ganador, "Recomendacion": recomendacion,
 
-        "Prob. principal": round(max(probs.values()), 1), "Margen 1X2": round(margen, 1),
+        "Prob. principal": round(max(probs.values()), 2), "Margen 1X2": round(margen, 2),
 
         "Prom_GF_Local": round(excel["local"]["K"], 3) if np.isfinite(excel["local"]["K"]) else np.nan,
 
@@ -1748,23 +1739,68 @@ else:
                     return "color: #b45309; font-weight: 700;"
                 return ""
 
-            def resaltar_probabilidad(valor):
-                # Resalta solo porcentajes estrictamente superiores a 59%.
+            def numero_porcentaje(valor):
                 try:
-                    numero = float(str(valor).replace("%", "").strip())
+                    return float(str(valor).replace("%", "").strip())
                 except (TypeError, ValueError):
-                    return ""
-                if numero > 59:
+                    return np.nan
+
+            def resaltar_probabilidad(valor):
+                # Resalta en verde cualquier porcentaje igual o superior al 60%.
+                numero = numero_porcentaje(valor)
+                if np.isfinite(numero) and numero >= 60:
                     return "color: #15803d; font-weight: 700;"
                 return ""
 
-            # Resaltar texto, no el fondo: señales y probabilidades > 59%.
-            styler = df_vista[columnas].style
-            for col in [c for c in ["Señal", "Estado", "Pronóstico 1X2"] if c in columnas]:
-                styler = styler.map(color_texto, subset=[col])
-            for col in [c for c in ["% Local", "% Empate", "% Visita", "Prob. principal"] if c in columnas]:
-                styler = styler.map(resaltar_probabilidad, subset=[col])
-            st.dataframe(styler, use_container_width=True, hide_index=True)
+            # Tabla resumen: una fila por partido, con porcentajes de hasta dos decimales.
+            columnas_resumen = [
+                "Señal", "Local", "Visita", "Pronóstico 1X2",
+                "% Local", "% Empate", "% Visita",
+                "Más de 2.5 goles", "Menos de 2.5 goles", "Ambos marcan: Sí",
+            ]
+            columnas_resumen = [c for c in columnas_resumen if c in df_resultados.columns]
+            df_resumen = df_resultados[columnas_resumen].copy()
+
+            for col in ["% Local", "% Empate", "% Visita"]:
+                if col in df_resumen.columns:
+                    df_resumen[col] = df_resumen[col].map(
+                        lambda v: f"{float(v):.2f}%" if pd.notna(v) else ""
+                    )
+
+            def aplicar_estilos(tabla, columnas_tabla):
+                estilo = tabla.style
+                for col in [c for c in ["Señal", "Estado", "Pronóstico 1X2"] if c in columnas_tabla]:
+                    estilo = estilo.map(color_texto, subset=[col])
+                # Detecta columnas de porcentajes y también valores que ya incluyen el signo %.
+                columnas_porcentaje = [
+                    c for c in columnas_tabla
+                    if "%" in c or "Prob." in c or "probabilidad" in c.lower()
+                ]
+                for col in columnas_porcentaje:
+                    estilo = estilo.map(resaltar_probabilidad, subset=[col])
+                for col in columnas_tabla:
+                    if tabla[col].astype(str).str.contains("%", regex=False).any():
+                        estilo = estilo.map(resaltar_probabilidad, subset=[col])
+                return estilo
+
+            st.subheader("Tabla resumen de resultados")
+            st.dataframe(
+                aplicar_estilos(df_resumen, list(df_resumen.columns)),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.subheader("Detalle de pronósticos")
+            styler = aplicar_estilos(df_vista[columnas], columnas)
+            formato = {
+                c: "{:.2f}%" for c in ["% Local", "% Empate", "% Visita"]
+                if c in columnas
+            }
+            st.dataframe(
+                styler.format(formato, na_rep="—"),
+                use_container_width=True,
+                hide_index=True,
+            )
 
             csv = df_vista.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
@@ -1939,7 +1975,7 @@ with st.expander("📈 Backtesting: evaluación con partidos ya jugados", expand
                     Brier_medio=("Brier", "mean"),
                     Log_loss_medio=("Log loss", "mean"),
                 )
-                por_jornada["Acierto 1X2"] = (por_jornada["Acierto_1X2"] * 100).round(1).astype(str) + "%"
+                por_jornada["Acierto 1X2"] = (por_jornada["Acierto_1X2"] * 100).map(lambda v: f"{v:.2f}%")
                 por_jornada["Brier medio"] = por_jornada["Brier_medio"].round(3)
                 por_jornada["Log loss medio"] = por_jornada["Log_loss_medio"].round(3)
                 st.dataframe(
