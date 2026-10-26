@@ -289,3 +289,159 @@ def construir_historico(datos):
             df["jornada"] = np.arange(1, len(df) + 1)
         df["jornada_num"] = pd.to_numeric(
             df["jornada"].astype(str).str.extract(r"(\d+)")[0], errors="coerce"
+        )
+        df["gl"] = pd.to_numeric(df["gl"], errors="coerce")
+        df["gv"] = pd.to_numeric(df["gv"], errors="coerce")
+        df = df.dropna(subset=["gl", "gv", "local_std", "visita_std"])
+        # xG se conserva únicamente cuando existe como dato real.
+        # No se sustituye por goles reales.
+        for xg in ("xg_local", "xg_visita"):
+            if xg not in df.columns:
+                df[xg] = np.nan
+            df[xg] = pd.to_numeric(df[xg], errors="coerce")
+        partes.append(df)
+    return pd.concat(partes, ignore_index=True, sort=False) if partes else pd.DataFrame()
+
+historico = construir_historico(datos)
+
+def preparar_tabla(df):
+    df = df.copy()
+    for c in ("pj", "pg", "pe", "pp", "gf", "gc", "dg", "pts", "rango", "pos"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+tabla_acumulada = preparar_tabla(datos["Tabla_Acumulada"])
+tabla_clausura = preparar_tabla(datos["Tabla_Clausura"])
+
+def fila_equipo_tabla(tabla, equipo):
+    if tabla.empty or "equipo_std" not in tabla.columns:
+        return None
+    z = tabla[tabla["equipo_std"] == normalizar_nombre(equipo)]
+    return None if z.empty else z.iloc[0]
+
+# ---------------------------------------------------------------------
+# 4. Contexto competitivo: puestos, urgencia y tensión de final de torneo
+# ---------------------------------------------------------------------
+def objetivo_equipo(fila, total_equipos=18):
+    if fila is None:
+        return "Sin datos de tabla"
+    situacion = str(fila.get("situacion_actual", "")).lower()
+    rango = a_float(fila.get("rango", fila.get("pos")))
+    if any(x in situacion for x in ["descenso directo", "zona de descenso"]):
+        return "Descenso directo"
+    if any(x in situacion for x in ["riesgo directo", "peligro de descenso", "descenso"]):
+        return "Lucha por la permanencia"
+    if "libertadores" in situacion:
+        return "Puestos de Libertadores / título"
+    if "sudamericana" in situacion:
+        return "Puestos de Sudamericana"
+    if np.isfinite(rango):
+        if rango <= 4:
+            return "Pelea alta: título / Libertadores"
+        if rango <= 8:
+            return "Pelea por torneo internacional"
+        if rango >= total_equipos - 1:
+            return "Descenso directo"
+        if rango >= total_equipos - 4:
+            return "Lucha por la permanencia"
+        if rango >= 9:
+            return "Zona media"
+    return "Objetivo por confirmar"
+
+def urgencia_equipo(fila, total_equipos=18):
+    """
+    Índice descriptivo de 0 a 1. No representa una probabilidad.
+    Sube en los extremos de la tabla y cerca de las zonas objetivo.
+    """
+    if fila is None:
+        return 0.25
+    situacion = str(fila.get("situacion_actual", "")).lower()
+    rango = a_float(fila.get("rango", fila.get("pos")))
+    pts = a_float(fila.get("pts"))
+    pj = a_float(fila.get("pj"))
+    if not np.isfinite(rango):
+        return 0.25
+    if any(x in situacion for x in ["descenso directo", "zona de descenso"]):
+        base = 0.95
+    elif any(x in situacion for x in ["riesgo directo", "peligro de descenso", "descenso"]):
+        base = 0.85
+    elif "libertadores" in situacion:
+        base = 0.78 if rango <= 4 else 0.62
+    elif "sudamericana" in situacion:
+        base = 0.68
+    elif rango <= 4:
+        base = 0.78
+    elif rango <= 8:
+        base = 0.62
+    elif rango >= total_equipos - 4:
+        base = 0.78
+    else:
+        base = 0.30
+
+    # Con pocos partidos por jugar, la presión de los objetivos suele aumentar.
+    pj_max = 34.0
+    restantes = max(0.0, pj_max - pj) if np.isfinite(pj) else 5.0
+    factor_cierre = float(np.clip((8.0 - restantes) / 8.0, 0.0, 1.0))
+    return float(np.clip(base * (0.70 + 0.30 * factor_cierre), 0.0, 1.0))
+
+def presion_partido(fila_l, fila_v):
+    ul, uv = urgencia_equipo(fila_l), urgencia_equipo(fila_v)
+    ol = objetivo_equipo(fila_l)
+    ov = objetivo_equipo(fila_v)
+    media = (ul + uv) / 2
+    if media >= .78:
+        nivel = "Muy alta"
+    elif media >= .60:
+        nivel = "Alta"
+    elif media >= .40:
+        nivel = "Media"
+    else:
+        nivel = "Baja"
+    return {
+        "Objetivo local": ol,
+        "Objetivo visita": ov,
+        "Urgencia local (0-1)": round(ul, 2),
+        "Urgencia visita (0-1)": round(uv, 2),
+        "Presión competitiva": nivel,
+        "Índice presión (0-1)": round(media, 2),
+    }
+
+# ---------------------------------------------------------------------
+# 5. Rendimiento de equipo con resultados, xG, tablas y forma
+# ---------------------------------------------------------------------
+def filtrar_historico_previo(fecha_partido=None, jornada_partido=None):
+    """Usa fecha real como corte principal. Nunca usa partidos del mismo día."""
+    h = historico.copy()
+    if h.empty:
+        return h
+
+    if fecha_partido is not None and pd.notna(fecha_partido) and "fecha" in h.columns:
+        fecha_obj = pd.Timestamp(fecha_partido).normalize()
+        fechas = pd.to_datetime(h["fecha"], errors="coerce")
+        # Solo registros con fecha conocida y estrictamente anteriores.
+        h = h[fechas.notna() & (fechas.dt.normalize() < fecha_obj)].copy()
+    elif jornada_partido is not None and pd.notna(jornada_partido):
+        try:
+            jn = int(jornada_partido)
+            h = h[(h["fuente"] != "Resultados_Clausura") | (h["jornada_num"] < jn)].copy()
+        except (ValueError, TypeError):
+            pass
+    return h
+
+
+def promedios_excel_equipo(equipo, fecha_partido=None, jornada_partido=None):
+    """Reproduce las cuatro primeras fórmulas de Resultados_Clausura."""
+    eq = normalizar_nombre(equipo)
+    h = filtrar_historico_previo(fecha_partido, jornada_partido)
+
+    if h.empty:
+        return {"K": np.nan, "L": np.nan, "M": np.nan, "N": np.nan,
+                "n_local": 0, "n_visita": 0}
+
+    local = h[h["local_std"] == eq].copy()
+    visita = h[h["visita_std"] == eq].copy()
+
+    return {
+        "K": float(local["gl"].mean()) if not local.empty else np.nan,
+        "L": float(local["gv"].mean()) if not local.empty else np.
