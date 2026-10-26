@@ -1543,8 +1543,6 @@ def pronosticar_partido(datos, partido):
 
     dia = {"Monday":"Lunes","Tuesday":"Martes","Wednesday":"Miércoles","Thursday":"Jueves","Friday":"Viernes","Saturday":"Sábado","Sunday":"Domingo"}.get(dia, dia)
 
-
-
     return {
 
         "Señal": senal, "Estado": estado, "Día": dia or "Por definir",
@@ -1577,7 +1575,8 @@ def pronosticar_partido(datos, partido):
 
         "Altitud usada por fórmula (J)": excel["altitud_excel_j"],
         **contexto,
-    }
-      "D2": round(excel["D2"], 4), "D6": round(excel["D6"], 4),
+    "D2": round(excel["D2"], 4), "D6": round(excel["D6"], 4),
 
         "Altitud usada por fórmula (J)": 
+    }
+     
