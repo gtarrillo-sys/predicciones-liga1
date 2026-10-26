@@ -533,4 +533,4 @@ def obtener_contexto(datos, partido):
     delta = alt_l - alt_v if np.isfinite(alt_l) and np.isfinite(alt_v) else np.nan
 
     clima_l = str(il.get("tipo_clima", "")).lower() if il is not None else ""
-    clima_v = str(iv.get("tipo_clima", "")).lower() if iv is
+    
