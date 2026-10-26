@@ -4,13 +4,14 @@
 
 Modelo de Predicción Liga 1 Perú - Quipus Data
 
-Versión revisada:
+Versión revisada con interacción hora-clima-altitud:
 
 - Lee las ocho hojas del archivo Liga1_2026.xlsx.
 - Usa Poisson con corrección Dixon-Coles.
 - Filtra los partidos históricos anteriores a cada encuentro usando la fecha real.
 - Recalcula K/L/M/N cronológicamente y no depende de referencias Prom_* desplazadas del Excel.
-- Incorpora forma, localía, xG, tablas, altitud, descanso y contexto competitivo.
+- Incorpora forma, localía, altitud, descanso y contexto competitivo; xG se compara
+  en backtesting y está desactivado por defecto hasta demostrar mejora.
 - Aplica realmente los factores contextuales después de la lambda base, evitando ajustes calculados pero no utilizados.
 - Muestra resaltado en las letras, no en el fondo de las filas.
 - Añade una lectura orientativa de presión competitiva: título/puestos internacionales,
@@ -480,6 +481,7 @@ archivo_predeterminado = next(
             "Liga1_2026(1).xlsx",
 
             "Liga1_2026(2).xlsx",
+            "Liga1_2026(3).xlsx",
 
         ]
 
@@ -920,83 +922,108 @@ def factores_altitud_excel(altitud):
 
 
 def lambdas_clausura_excel(local, visita, fecha_partido=None, jornada_partido=None,
-
                            altitud_excel_j=np.nan):
-
     """
+    Calcula goles esperados usando solo datos previos al partido:
+    - base de goles anotados/recibidos por condición local/visita;
+    - ajuste experimental con xG, cuando hay suficientes observaciones previas;
+    - factores de altitud de la fórmula histórica del Excel.
 
-    Reproduce la metodología de Resultados_Clausura:
-
-      lambda_local     = ((K * N) / D2) * factor
-
-      lambda_visitante = ((M * L) / D6) * factor
-
-
-
-    IMPORTANTE:
-
-    En el Excel actualizado, la columna J es Altitud_Visita.
-
-    Las fórmulas originales usan J para aplicar los factores de altitud,
-
-    por lo que se replica exactamente esa referencia.
-
+    El ajuste xG es configurable y no se interpreta como mejora garantizada.
     """
-
     ml = promedios_excel_equipo(local, fecha_partido, jornada_partido)
-
     mv = promedios_excel_equipo(visita, fecha_partido, jornada_partido)
+    h = filtrar_historico_previo(fecha_partido, jornada_partido)
 
-    d2, d6 = datos["prior_local"], datos["prior_visita"]
+    # Promedios de referencia calculados solo con partidos disponibles antes
+    # de la jornada evaluada, para evitar fuga temporal en backtesting.
+    if not h.empty:
+        d2 = pd.to_numeric(h["gl"], errors="coerce").mean()
+        d6 = pd.to_numeric(h["gv"], errors="coerce").mean()
+    else:
+        d2, d6 = datos["prior_local"], datos["prior_visita"]
 
     f_local, f_visita = factores_altitud_excel(altitud_excel_j)
 
-
-
-    lam_l = (
-
-        np.nan
-
-        if not all(np.isfinite([ml["K"], mv["N"], d2])) or d2 <= 0
-
-        else (ml["K"] * mv["N"] / d2) * f_local
-
+    lam_l_goles = (
+        np.nan if not all(np.isfinite([ml["K"], mv["N"], d2])) or d2 <= 0
+        else (ml["K"] * mv["N"] / d2)
+    )
+    lam_v_goles = (
+        np.nan if not all(np.isfinite([mv["M"], ml["L"], d6])) or d6 <= 0
+        else (mv["M"] * ml["L"] / d6)
     )
 
-    lam_v = (
+    # xG: promedios de creación y concesión separados por condición de juego.
+    # Se utilizan únicamente los xG de partidos anteriores al partido objetivo.
+    xg_l, xg_v = np.nan, np.nan
+    peso_xg = float(np.clip(PESO_XG_MODELO, 0.0, 0.50))
+    if not h.empty and {"xg_local", "xg_visita", "local_std", "visita_std"}.issubset(h.columns):
+        eq_l, eq_v = normalizar_nombre(local), normalizar_nombre(visita)
+        hx = h.copy()
+        # Las columnas xG del usuario ya llevan ajuste de altitud. Para poder
+        # volver a modelar la sede del partido objetivo sin duplicar el ajuste,
+        # quitamos de cada observación histórica el factor de altitud que se le
+        # aplicó en su propio estadio. Después el factor del estadio objetivo se
+        # aplica una sola vez al lambda final.
+        if "altitud_local" in hx.columns:
+            def neutralizar_xg_fila(r, col):
+                val = a_float(r.get(col))
+                alt_hist = a_float(r.get("altitud_local"))
+                fl_hist, fv_hist = factores_altitud_excel(alt_hist)
+                factor_hist = fl_hist if col == "xg_local" else fv_hist
+                return val / factor_hist if np.isfinite(val) and factor_hist > 0 else np.nan
+            hx["xg_local_neutro"] = hx.apply(lambda r: neutralizar_xg_fila(r, "xg_local"), axis=1)
+            hx["xg_visita_neutro"] = hx.apply(lambda r: neutralizar_xg_fila(r, "xg_visita"), axis=1)
+        else:
+            hx["xg_local_neutro"] = pd.to_numeric(hx["xg_local"], errors="coerce")
+            hx["xg_visita_neutro"] = pd.to_numeric(hx["xg_visita"], errors="coerce")
 
-        np.nan
+        hl = hx[hx["local_std"] == eq_l]
+        hv = hx[hx["visita_std"] == eq_v]
+        # Para lambda local: xG producido en casa por local y xG concedido
+        # fuera por visitante. Para lambda visitante, el sentido inverso.
+        xg_for_l = pd.to_numeric(hl["xg_local_neutro"], errors="coerce").dropna()
+        xg_against_v = pd.to_numeric(hv["xg_local_neutro"], errors="coerce").dropna()
+        xg_for_v = pd.to_numeric(hv["xg_visita_neutro"], errors="coerce").dropna()
+        xg_against_l = pd.to_numeric(hl["xg_visita_neutro"], errors="coerce").dropna()
+        prior_xg_l = pd.to_numeric(hx["xg_local_neutro"], errors="coerce").mean()
+        prior_xg_v = pd.to_numeric(hx["xg_visita_neutro"], errors="coerce").mean()
 
-        if not all(np.isfinite([mv["M"], ml["L"], d6])) or d6 <= 0
+        if (min(len(xg_for_l), len(xg_against_v), len(xg_for_v), len(xg_against_l)) >= 3
+                and np.isfinite(prior_xg_l) and prior_xg_l > 0
+                and np.isfinite(prior_xg_v) and prior_xg_v > 0):
+            xg_l = float(xg_for_l.mean() * xg_against_v.mean() / prior_xg_l)
+            xg_v = float(xg_for_v.mean() * xg_against_l.mean() / prior_xg_v)
 
-        else (mv["M"] * ml["L"] / d6) * f_visita
+    # Mezcla conservadora goles/xG; si no hay suficientes datos xG, se mantiene
+    # la estimación basada en goles. Altitud se aplica una sola vez al final.
+    lam_l = lam_l_goles
+    lam_v = lam_v_goles
+    if np.isfinite(lam_l_goles) and np.isfinite(xg_l):
+        lam_l = (1 - peso_xg) * lam_l_goles + peso_xg * xg_l
+    if np.isfinite(lam_v_goles) and np.isfinite(xg_v):
+        lam_v = (1 - peso_xg) * lam_v_goles + peso_xg * xg_v
 
-    )
-
-
+    lam_l = lam_l * f_local if np.isfinite(lam_l) else np.nan
+    lam_v = lam_v * f_visita if np.isfinite(lam_v) else np.nan
 
     return {
-
         "lambda_local": lam_l,
-
         "lambda_visita": lam_v,
-
         "local": ml,
-
         "visita": mv,
-
         "D2": d2,
-
         "D6": d6,
-
+        "lambda_local_goles": lam_l_goles * f_local if np.isfinite(lam_l_goles) else np.nan,
+        "lambda_visita_goles": lam_v_goles * f_visita if np.isfinite(lam_v_goles) else np.nan,
+        "lambda_local_xg": xg_l * f_local if np.isfinite(xg_l) else np.nan,
+        "lambda_visita_xg": xg_v * f_visita if np.isfinite(xg_v) else np.nan,
+        "peso_xg": peso_xg if np.isfinite(xg_l) and np.isfinite(xg_v) else 0.0,
         "altitud_excel_j": a_float(altitud_excel_j),
-
         "factor_altitud_local": f_local,
-
         "factor_altitud_visita": f_visita,
-
     }
-
 
 
 
@@ -1079,6 +1106,8 @@ def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
 
 # ---------------------------------------------------------------------
 
+PESO_XG_MODELO = 0.00  # xG desactivado por defecto: el backtest inicial empeoró Brier/log loss al mezclarlo.
+
 APLICAR_MICROAJUSTE_PRESION = False
 
 
@@ -1109,9 +1138,29 @@ def obtener_contexto(datos, partido):
 
     il, iv = info_geo(eq_loc), info_geo(eq_vis)
 
-    alt_l = a_float(il.get("altitud_msnm")) if il is not None else a_float(partido.get("altitud_local"), 0)
+    # Para el partido actual, la sede concreta indicada en Partidos_Fecha tiene
+    # prioridad. Luego se busca el estadio exacto en Data_Geografica y, por
+    # último, se recurre a la ficha geográfica del club local.
+    estadio_partido = limpio(partido.get("estadio"))
+    ciudad_partido = limpio(partido.get("ciudad"))
+    sede_geo = None
+    if not geo.empty and "estadio" in geo.columns and estadio_partido:
+        coincidencia = geo[geo["estadio"].astype(str).str.strip().str.casefold() == estadio_partido.casefold()]
+        if not coincidencia.empty:
+            sede_geo = coincidencia.iloc[0]
+    if sede_geo is None and not geo.empty and "ciudad" in geo.columns and ciudad_partido:
+        coincidencia = geo[geo["ciudad"].astype(str).str.strip().str.casefold() == ciudad_partido.casefold()]
+        if not coincidencia.empty:
+            sede_geo = coincidencia.iloc[0]
+    if sede_geo is None:
+        sede_geo = il
 
-    alt_v = a_float(iv.get("altitud_msnm")) if iv is not None else a_float(partido.get("altitud_visita"), 0)
+    alt_l_fixture = a_float(partido.get("altitud_local"))
+    alt_l_geo = a_float(sede_geo.get("altitud_msnm")) if sede_geo is not None else np.nan
+    alt_l = alt_l_fixture if np.isfinite(alt_l_fixture) else alt_l_geo
+    alt_v = a_float(partido.get("altitud_visita"))
+    if not np.isfinite(alt_v):
+        alt_v = a_float(iv.get("altitud_msnm")) if iv is not None else np.nan
 
     delta = alt_l - alt_v if np.isfinite(alt_l) and np.isfinite(alt_v) else np.nan
 
@@ -1123,43 +1172,57 @@ def obtener_contexto(datos, partido):
 
 
 
-    clima_l = str(il.get("tipo_clima", "")).lower() if il is not None else ""
-
-    clima_v = str(iv.get("tipo_clima", "")).lower() if iv is not None else ""
-
-    cancha_l = str(il.get("tipo_cancha", "")).lower() if il is not None else ""
-
-    if "calor" in clima_l and "calor" not in clima_v:
-
-        f_loc *= 1.02; f_vis *= .98
+    # El clima del partido se toma del estadio/localidad donde se juega,
+    # no se compara el clima de origen de ambos clubes. Priorizamos la sede
+    # informada en Partidos_Fecha y usamos Data_Geografica como respaldo.
+    clima_estadio = str(sede_geo.get("tipo_clima", "")).lower() if sede_geo is not None else ""
+    cancha_l = str(sede_geo.get("tipo_cancha", "")).lower() if sede_geo is not None else ""
 
     if "sintetic" in cancha_l or "sintética" in cancha_l:
-
-        f_loc *= 1.02; f_vis *= .98
-
-
+        f_loc *= 1.01
+        f_vis *= .99
 
     descanso_l = a_float(partido.get("dias_descanso_local"), 7)
-
     descanso_v = a_float(partido.get("dias_descanso_visita"), 7)
+    if descanso_l < 4:
+        f_loc *= .95
+    if descanso_v < 4:
+        f_vis *= .95
 
-    if descanso_l < 4: f_loc *= .95
-
-    if descanso_v < 4: f_vis *= .95
-
-
-
+    # Interacción conservadora entre hora de inicio y condiciones del estadio.
+    # No es una medición meteorológica en vivo: es una regla contextual basada
+    # en el tipo de clima y altitud registrados en el Excel. Se mantiene pequeña
+    # porque los factores principales de altitud ya se aplican en lambda.
     hora = parsear_hora(partido.get("hora"))
-
+    hora_num = None
     try:
-
-        if int(hora.split(":")[0]) in (11, 12, 13) and np.isfinite(delta) and delta > 1000:
-
-            f_loc *= 1.02; f_vis *= .99
-
-    except Exception:
-
+        hora_num = int(hora.split(":")[0])
+    except (ValueError, TypeError, IndexError):
         pass
+
+    calor_extremo = ("calor extremo" in clima_estadio) or ("caluroso" in clima_estadio)
+    calor = calor_extremo or ("calor" in clima_estadio)
+    if hora_num is not None:
+        # Sullana y sedes marcadas con calor: el tramo 12:00-15:59 suele
+        # representar mayor carga térmica que un inicio a las 15:00 exactas
+        # no garantiza temperatura concreta; por eso el ajuste es leve.
+        if calor and 12 <= hora_num <= 15:
+            f_loc *= 1.015
+            f_vis *= .975
+        elif calor and (hora_num == 11 or hora_num == 16):
+            f_loc *= 1.005
+            f_vis *= .990
+
+        # En altura, jugar al mediodía puede aumentar la exigencia física.
+        # Como el ajuste de altitud base ya existe, aquí solo se modela una
+        # interacción hora-altitud pequeña, evitando duplicar un gran factor.
+        if np.isfinite(alt_l):
+            if alt_l >= 2500 and 11 <= hora_num <= 14:
+                f_loc *= 1.005
+                f_vis *= .985
+            elif alt_l >= 1500 and 11 <= hora_num <= 14:
+                f_loc *= 1.002
+                f_vis *= .992
 
 
 
@@ -1222,17 +1285,12 @@ def obtener_contexto(datos, partido):
                 rho = -.12
 
 
-
     fila_l = fila_equipo_tabla(tabla_acumulada, loc)
-
     fila_v = fila_equipo_tabla(tabla_acumulada, vis)
-
     presion = presion_partido(fila_l, fila_v)
 
 
-
     # Presión: ajuste pequeño y simétrico al nivel de goles esperados.
-
     # No se fuerza a que un equipo "deba ganar"; la incertidumbre se comunica.
 
     if APLICAR_MICROAJUSTE_PRESION and presion["Índice presión (0-1)"] >= .80:
@@ -1240,7 +1298,6 @@ def obtener_contexto(datos, partido):
         f_loc *= 1.015
 
         f_vis *= 1.015
-
 
 
     return (
@@ -1254,16 +1311,16 @@ def obtener_contexto(datos, partido):
         {
 
             "Altitud local": alt_l, "Altitud visita": alt_v, "Delta usado": delta,
-
+            "Estadio": estadio_partido, "Ciudad": ciudad_partido,
+            "Clima estadio": clima_estadio, "Hora inicio": hora,
+            "Factor contextual local": float(f_loc),
+            "Factor contextual visita": float(f_vis),
             "Descanso local": descanso_l, "Descanso visita": descanso_v,
-
             **presion,
 
         },
 
     )
-
-
 
 def matriz_dixon_coles(lambda_loc, lambda_vis, rho=-.08, max_goles=9):
 
@@ -1278,11 +1335,8 @@ def matriz_dixon_coles(lambda_loc, lambda_vis, rho=-.08, max_goles=9):
             tau = 1.0
 
             if i == 0 and j == 0: tau = 1 - lambda_loc * lambda_vis * rho
-
             elif i == 1 and j == 0: tau = 1 + lambda_vis * rho
-
             elif i == 0 and j == 1: tau = 1 + lambda_loc * rho
-
             elif i == 1 and j == 1: tau = 1 - rho
 
             matriz[i, j] = max(0.0, p * tau)
@@ -1292,47 +1346,33 @@ def matriz_dixon_coles(lambda_loc, lambda_vis, rho=-.08, max_goles=9):
     return matriz / total if total > 0 else matriz
 
 
-
 # ---------------------------------------------------------------------
-
 # 7. Pronóstico de partido
-
 # ---------------------------------------------------------------------
 
 def pronosticar_partido(datos, partido):
 
     loc, vis = limpio(partido.get("local")), limpio(partido.get("visita"))
-
     fecha = partido.get("fecha")
-
     jornada_num = partido.get("jornada_num")
-
 
 
     f_loc, f_vis, rho, contexto = obtener_contexto(datos, partido)
 
 
+    # Metodología principal: promedios de goles y factores de altitud.
+    # Corrección metodológica: la altitud que afecta el partido es la del
+    # estadio del equipo local (Altitud_Local), no la ciudad de origen del
+    # equipo visitante. La fórmula del Excel usa Altitud_Visita por error.
 
-    # Metodología principal: fórmulas de Resultados_Clausura.
-
-    # La altitud ya está incorporada en esta etapa.
-
-    # La fórmula Excel usa la columna J = Altitud_Visita.
-
-    # No usar Altitud_Local aquí: hacerlo produciría un modelo distinto al Excel.
-
-    altitud_j = a_float(partido.get("altitud_visita"), np.nan)
+    altitud_estadio = a_float(partido.get("altitud_local"), np.nan)
 
     excel = lambdas_clausura_excel(
-
-        loc, vis, fecha, jornada_num, altitud_j
-
+        loc, vis, fecha, jornada_num, altitud_estadio
     )
 
 
-
     lambda_loc = excel["lambda_local"]
-
     lambda_vis = excel["lambda_visita"]
 
 
@@ -1342,84 +1382,48 @@ def pronosticar_partido(datos, partido):
     if not np.isfinite(lambda_loc) or not np.isfinite(lambda_vis):
 
         ml = metricas_equipo(datos, loc, fecha, jornada_num)
-
         mv = metricas_equipo(datos, vis, fecha, jornada_num)
 
         lambda_loc = ((ml["gf_local"] + mv["ga_visita"]) / 2) if not np.isfinite(lambda_loc) else lambda_loc
-
         lambda_vis = ((mv["gf_visita"] + ml["ga_local"]) / 2) if not np.isfinite(lambda_vis) else lambda_vis
 
-
-
     # Ajustes contextuales pequeños posteriores a la fórmula Excel.
-
     # La altitud NO se reaplica: ya está incorporada en lambda mediante J.
-
     # Aquí se aplican los factores calculados por obtener_contexto: clima,
-
     # cancha, descanso, horario, H2H y, opcionalmente, presión.
 
     lambda_loc *= f_loc
-
     lambda_vis *= f_vis
 
-
-
     lambda_loc = float(np.clip(lambda_loc, .20, 4.0))
-
     lambda_vis = float(np.clip(lambda_vis, .20, 4.0))
 
 
-
     matriz = matriz_dixon_coles(lambda_loc, lambda_vis, rho)
-
     p_local = float(np.tril(matriz, -1).sum() * 100)
-
     p_empate = float(np.diag(matriz).sum() * 100)
-
     p_visita = float(np.triu(matriz, 1).sum() * 100)
-
     p_over = float(sum(matriz[i, j] for i in range(len(matriz)) for j in range(len(matriz)) if i + j >= 3) * 100)
-
     p_under = 100 - p_over
-
     p_btts = float(matriz[1:, 1:].sum() * 100)
 
-
-
     i_modal, j_modal = np.unravel_index(np.argmax(matriz), matriz.shape)
-
     probs = {"Local": p_local, "Empate": p_empate, "Visita": p_visita}
-
     ganador = max(probs, key=probs.get)
-
     orden = sorted(probs.values(), reverse=True)
-
     margen = orden[0] - orden[1]
 
-
-
     # -----------------------------------------------------------------
-
     # Marcador compatible
-
     # -----------------------------------------------------------------
-
     # No basta con condicionar al 1X2. El marcador mostrado debe ser
-
     # compatible también con los mercados que el sistema está recomendando.
-
     #
-
     # Ejemplo:
-
     #   Local + Over 2.5 + BTTS -> 3-0 NO es compatible.
-
     #   Local + Over 2.5 + BTTS -> 2-1 sí es compatible.
 
     mascara = np.zeros_like(matriz)
-
-
 
     for i in range(matriz.shape[0]):
 
@@ -1437,8 +1441,6 @@ def pronosticar_partido(datos, partido):
 
                 ok = i == j
 
-
-
             # Solo condicionamos el mercado si forma parte de la
 
             # recomendación automática.
@@ -1451,19 +1453,13 @@ def pronosticar_partido(datos, partido):
 
                 ok = ok and (i + j <= 2)
 
-
-
             if p_btts >= 55:
 
                 ok = ok and (i >= 1 and j >= 1)
 
-
-
             if ok:
 
                 mascara[i, j] = matriz[i, j]
-
-
 
     if mascara.sum() > 0:
 
@@ -1487,8 +1483,6 @@ def pronosticar_partido(datos, partido):
 
         i_pron, j_pron = np.unravel_index(np.argmax(mascara), mascara.shape)
 
-
-
     criterios_marcador = ["1X2"]
 
     if p_over >= 55:
@@ -1503,8 +1497,6 @@ def pronosticar_partido(datos, partido):
 
         criterios_marcador.append("BTTS")
 
-
-
     if max(probs.values()) >= 60 and margen >= 12:
 
         estado, senal = "FIJA", "🟢"
@@ -1517,8 +1509,6 @@ def pronosticar_partido(datos, partido):
 
         estado, senal = "INTERMEDIO", "🟡"
 
-
-
     recomendacion = (
 
         f"{ganador} (confianza alta)" if estado == "FIJA" else
@@ -1530,56 +1520,41 @@ def pronosticar_partido(datos, partido):
     )
 
     if p_over >= 55:
-
         recomendacion += " | Más de 2.5 goles"
-
     elif p_under >= 58:
-
         recomendacion += " | Menos de 2.5 goles"
 
     if p_btts >= 55:
 
         recomendacion += " | Ambos marcan"
 
-
-
     dia = limpio(partido.get("dia")) or (pd.Timestamp(fecha).day_name() if pd.notna(fecha) else "Por definir")
-
     dia = {"Monday":"Lunes","Tuesday":"Martes","Wednesday":"Miércoles","Thursday":"Jueves","Friday":"Viernes","Saturday":"Sábado","Sunday":"Domingo"}.get(dia, dia)
-
-
 
     return {
 
         "Señal": senal, "Estado": estado, "Día": dia or "Por definir",
-
         "Hora": parsear_hora(partido.get("hora")), "Local": loc, "Visita": vis,
-
         "λ Local": round(lambda_loc, 2), "λ Visita": round(lambda_vis, 2),
-
         "% Local": round(p_local, 1), "% Empate": round(p_empate, 1), "% Visita": round(p_visita, 1),
-
         "Más de 2.5 goles": f"{p_over:.1f}%", "Menos de 2.5 goles": f"{p_under:.1f}%", "Ambos marcan: Sí": f"{p_btts:.1f}%",
-
         "Marcador compatible": f"{i_pron} - {j_pron}",
-
         "Marcador modal": f"{i_modal} - {j_modal}",
-
         "Pronóstico 1X2": ganador, "Recomendacion": recomendacion,
-
         "Prob. principal": round(max(probs.values()), 1), "Margen 1X2": round(margen, 1),
-
         "Prom_GF_Local": round(excel["local"]["K"], 3) if np.isfinite(excel["local"]["K"]) else np.nan,
-
         "Prom_GC_Local": round(excel["local"]["L"], 3) if np.isfinite(excel["local"]["L"]) else np.nan,
-
         "Prom_GF_Visita": round(excel["visita"]["M"], 3) if np.isfinite(excel["visita"]["M"]) else np.nan,
-
         "Prom_GC_Visita": round(excel["visita"]["N"], 3) if np.isfinite(excel["visita"]["N"]) else np.nan,
+                "D2": round(excel["D2"], 4) if np.isfinite(excel["D2"]) else np.nan,
+        "D6": round(excel["D6"], 4) if np.isfinite(excel["D6"]) else np.nan,
+        "λ Local base goles": round(excel["lambda_local_goles"], 2) if np.isfinite(excel["lambda_local_goles"]) else np.nan,
+        "λ Visita base goles": round(excel["lambda_visita_goles"], 2) if np.isfinite(excel["lambda_visita_goles"]) else np.nan,
+        "λ Local xG": round(excel["lambda_local_xg"], 2) if np.isfinite(excel["lambda_local_xg"]) else np.nan,
+        "λ Visita xG": round(excel["lambda_visita_xg"], 2) if np.isfinite(excel["lambda_visita_xg"]) else np.nan,
+        "Peso xG aplicado": round(excel["peso_xg"], 2),
 
-        "D2": round(excel["D2"], 4), "D6": round(excel["D6"], 4),
-
-        "Altitud usada por fórmula (J)": round(altitud_j, 1) if np.isfinite(altitud_j) else np.nan,
+        "Altitud del estadio usada por fórmula": round(altitud_estadio, 1) if np.isfinite(altitud_estadio) else np.nan,
         "Factores contexto local": round(f_loc, 3),
         "Factores contexto visita": round(f_vis, 3),
         "Criterios marcador": ", ".join(criterios_marcador),
@@ -1697,7 +1672,7 @@ else:
                 tecnicas = [
                     "λ Local", "λ Visita", "Prob. principal", "Margen 1X2",
                     "Prom_GF_Local", "Prom_GC_Local", "Prom_GF_Visita", "Prom_GC_Visita",
-                    "D2", "D6", "Altitud usada por fórmula (J)",
+                    "D2", "D6", "Altitud del estadio usada por fórmula",
                     "Factores contexto local", "Factores contexto visita", "Criterios marcador",
                     "Presión competitiva",
                 ]
@@ -1705,6 +1680,177 @@ else:
                 st.dataframe(df_resultados[cols_tec], use_container_width=True, hide_index=True)
         else:
             st.info("No hay resultados para el tipo de señal seleccionado.")
+
+
+# ---------------------------------------------------------------------
+# 9. Backtesting cronológico (solo Clausura, con Apertura como histórico previo)
+# ---------------------------------------------------------------------
+def ejecutar_backtesting_clausura(datos):
+    """
+    Evalúa cada partido del Clausura con los resultados del Apertura y solo
+    las jornadas anteriores del Clausura. Los partidos de la misma jornada
+    se excluyen todos del entrenamiento porque el Excel no trae fecha real
+    para cada resultado histórico.
+    """
+    df = datos.get("Resultados_Clausura", pd.DataFrame()).copy()
+    columnas_req = {"jornada", "local", "visita", "gl", "gv"}
+    if df.empty or not columnas_req.issubset(df.columns):
+        return pd.DataFrame(), "La hoja Resultados_Clausura no contiene las columnas necesarias."
+
+    df["jornada_num"] = pd.to_numeric(
+        df["jornada"].astype(str).str.extract(r"(\d+)")[0], errors="coerce"
+    )
+    df["gl"] = pd.to_numeric(df["gl"], errors="coerce")
+    df["gv"] = pd.to_numeric(df["gv"], errors="coerce")
+    df = df.dropna(subset=["jornada_num", "local", "visita", "gl", "gv"])
+    df = df.sort_values(["jornada_num", "local", "visita"]).reset_index(drop=True)
+
+    resultados_bt = []
+    for _, partido in df.iterrows():
+        # No se evalúa si faltan datos identificables.
+        try:
+            pred = pronosticar_partido(datos, partido)
+            gl_real, gv_real = int(partido["gl"]), int(partido["gv"])
+            real = "Local" if gl_real > gv_real else ("Visita" if gl_real < gv_real else "Empate")
+            probs = {
+                "Local": float(pred["% Local"]) / 100.0,
+                "Empate": float(pred["% Empate"]) / 100.0,
+                "Visita": float(pred["% Visita"]) / 100.0,
+            }
+            p_real = max(1e-6, min(1.0, probs[real]))
+            brier = sum((probs[k] - (1.0 if k == real else 0.0)) ** 2 for k in probs)
+            resultados_bt.append({
+                "Jornada": int(partido["jornada_num"]),
+                "Local": partido["local"],
+                "Visita": partido["visita"],
+                "Goles reales": f"{gl_real}-{gv_real}",
+                "Resultado real": real,
+                "Pronóstico 1X2": pred["Pronóstico 1X2"],
+                "Acierto 1X2": int(pred["Pronóstico 1X2"] == real),
+                "Marcador modal": pred["Marcador modal"],
+                "Acierto marcador exacto": int(pred["Marcador modal"] == f"{gl_real} - {gv_real}"),
+                "Prob. Local": probs["Local"],
+                "Prob. Empate": probs["Empate"],
+                "Prob. Visita": probs["Visita"],
+                "Brier": brier,
+                "Log loss": -np.log(p_real),
+                "λ Local": pred["λ Local"],
+                "λ Visita": pred["λ Visita"],
+            })
+        except Exception as exc:
+            resultados_bt.append({
+                "Jornada": int(partido["jornada_num"]),
+                "Local": partido.get("local", ""),
+                "Visita": partido.get("visita", ""),
+                "Error": str(exc),
+            })
+    return pd.DataFrame(resultados_bt), None
+
+
+with st.expander("📈 Backtesting: evaluación con partidos ya jugados", expanded=False):
+    st.write(
+        "El backtesting simula cada partido del Clausura usando el Apertura como "
+        "histórico previo y solo jornadas anteriores del Clausura. Todos los partidos "
+        "de una misma jornada quedan fuera del entrenamiento. Como la hoja histórica "
+        "no contiene fechas reales por partido, el corte temporal se realiza por jornada. "
+        "El modelo también considera el estadio, la altitud y la hora de inicio; los "
+        "ajustes hora-clima son conservadores y no sustituyen datos meteorológicos reales."
+    )
+    st.warning(
+        "La evaluación no es una garantía de rendimiento futuro. Las tablas de posiciones "
+        "actuales solo se muestran como contexto; no se utilizan para ajustar la probabilidad "
+        "durante el backtesting. El ajuste xG es experimental y debe compararse con el modelo "
+        "sin xG antes de decidir si conservarlo."
+    )
+    if st.button("Ejecutar backtesting del Clausura", key="btn_backtesting"):
+        with st.spinner("Comparando el modelo con y sin xG, respetando el orden de las jornadas..."):
+            peso_original = PESO_XG_MODELO
+            PESO_XG_MODELO = 0.0
+            df_bt, mensaje_bt = ejecutar_backtesting_clausura(datos)
+            PESO_XG_MODELO = 0.20
+            df_con_xg, mensaje_con_xg = ejecutar_backtesting_clausura(datos)
+            PESO_XG_MODELO = peso_original
+            mensaje_sin_xg = None
+        if mensaje_bt or mensaje_con_xg:
+            st.error(mensaje_bt or mensaje_con_xg)
+        elif df_bt.empty:
+            st.info("No hay partidos históricos suficientes para evaluar.")
+        else:
+            if "Error" in df_bt.columns:
+                errores_bt = df_bt[df_bt["Error"].notna()] if df_bt["Error"].notna().any() else pd.DataFrame()
+                df_ok = df_bt[df_bt["Error"].isna()].copy() if df_bt["Error"].notna().any() else df_bt.copy()
+            else:
+                errores_bt = pd.DataFrame()
+                df_ok = df_bt.copy()
+
+            if not errores_bt.empty:
+                st.warning(f"{len(errores_bt)} partidos no pudieron evaluarse.")
+                st.dataframe(errores_bt[["Jornada", "Local", "Visita", "Error"]], use_container_width=True, hide_index=True)
+
+            if not df_ok.empty and "Acierto 1X2" in df_ok.columns:
+                n = len(df_ok)
+                accuracy = df_ok["Acierto 1X2"].mean() * 100
+                exact = df_ok["Acierto marcador exacto"].mean() * 100
+                brier_mean = df_ok["Brier"].mean()
+                logloss_mean = df_ok["Log loss"].mean()
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Partidos evaluados", f"{n}")
+                c2.metric("Acierto 1X2", f"{accuracy:.1f}%")
+                c3.metric("Marcador exacto", f"{exact:.1f}%")
+                c4.metric("Brier medio", f"{brier_mean:.3f}")
+                st.caption(f"Log loss medio: {logloss_mean:.3f}. Para Brier y log loss, valores menores son mejores.")
+                referencia_local = (df_ok["Resultado real"] == "Local").mean() * 100
+                st.caption(
+                    f"Referencia simple: acertar siempre al equipo local habría logrado "
+                    f"{referencia_local:.1f}% en estos mismos partidos."
+                )
+                if not df_con_xg.empty and "Acierto 1X2" in df_con_xg.columns:
+                    df_con_xg_ok = df_con_xg[df_con_xg["Acierto 1X2"].notna()].copy()
+                    if not df_con_xg_ok.empty:
+                        comparacion = pd.DataFrame([
+                            {
+                                "Modelo": "Sin xG (peso 0%)",
+                                "Partidos": len(df_ok),
+                                "Acierto 1X2 (%)": round(df_ok["Acierto 1X2"].mean() * 100, 2),
+                                "Brier medio": round(df_ok["Brier"].mean(), 4),
+                                "Log loss medio": round(df_ok["Log loss"].mean(), 4),
+                            },
+                            {
+                                "Modelo": "Con xG (peso 20%)",
+                                "Partidos": len(df_con_xg_ok),
+                                "Acierto 1X2 (%)": round(df_con_xg_ok["Acierto 1X2"].mean() * 100, 2),
+                                "Brier medio": round(df_con_xg_ok["Brier"].mean(), 4),
+                                "Log loss medio": round(df_con_xg_ok["Log loss"].mean(), 4),
+                            },
+                        ])
+                        st.subheader("Comparación del modelo con y sin xG")
+                        st.dataframe(comparacion, use_container_width=True, hide_index=True)
+                        st.caption("No se debe conservar el ajuste xG solo porque suba el porcentaje de acierto: compare también Brier y log loss. Menor Brier/log loss es mejor.")
+                st.subheader("Resultados por jornada")
+                por_jornada = df_ok.groupby("Jornada", as_index=False).agg(
+                    Partidos=("Acierto 1X2", "count"),
+                    Acierto_1X2=("Acierto 1X2", "mean"),
+                    Brier_medio=("Brier", "mean"),
+                    Log_loss_medio=("Log loss", "mean"),
+                )
+                por_jornada["Acierto 1X2"] = (por_jornada["Acierto_1X2"] * 100).round(1).astype(str) + "%"
+                por_jornada["Brier medio"] = por_jornada["Brier_medio"].round(3)
+                por_jornada["Log loss medio"] = por_jornada["Log_loss_medio"].round(3)
+                st.dataframe(
+                    por_jornada[["Jornada", "Partidos", "Acierto 1X2", "Brier medio", "Log loss medio"]],
+                    use_container_width=True, hide_index=True
+                )
+                st.subheader("Detalle de partidos")
+                st.dataframe(df_ok, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Descargar resultados del backtesting (CSV)",
+                    data=df_ok.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="backtesting_liga1.csv",
+                    mime="text/csv",
+                    key="download_backtesting",
+                )
+            else:
+                st.info("No se pudieron evaluar partidos válidos.")
 
 st.divider()
 st.caption(
