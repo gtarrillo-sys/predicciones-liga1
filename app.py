@@ -1682,7 +1682,7 @@ else:
             # Resaltar letras de las señales, no el fondo de las celdas.
             styler = df_resultados[columnas].style
             for col in [c for c in ["Señal", "Estado", "Pronóstico 1X2"] if c in columnas]:
-                styler = styler.applymap(color_texto, subset=[col])
+                styler = styler.map(color_texto, subset=[col])
             st.dataframe(styler, use_container_width=True, hide_index=True)
 
             csv = df_resultados.to_csv(index=False).encode("utf-8-sig")
