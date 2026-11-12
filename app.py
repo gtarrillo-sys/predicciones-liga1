@@ -10,8 +10,10 @@ Versión revisada con interacción hora-clima-altitud:
 - Usa Poisson con corrección Dixon-Coles.
 - Filtra los partidos históricos anteriores a cada encuentro usando la fecha real.
 - Recalcula K/L/M/N cronológicamente y no depende de referencias Prom_* desplazadas del Excel.
-- Incorpora forma, localía, altitud, descanso y contexto competitivo; xG se compara
-  en backtesting y está desactivado por defecto hasta demostrar mejora.
+- Incorpora forma, localía, altitud, descanso y contexto competitivo; xG es configurable
+  y se mantiene en 0% por defecto hasta demostrar mejora fuera de muestra.
+- Integra estadísticas de tiros, tiros a puerta, córners, faltas y tarjetas por CSV,
+  FootyStats API o API-Football, en un módulo separado del 1X2.
 - Aplica realmente los factores contextuales después de la lambda base, evitando ajustes calculados pero no utilizados.
 - Muestra resaltado en las letras, no en el fondo de las filas.
 - Añade una lectura orientativa de presión competitiva: título/puestos internacionales,
@@ -28,7 +30,7 @@ Instalación:
 
 Ejecución:
 
-    streamlit run app_liga1.py
+    streamlit run app_quipus_data_4_0.py
 
 """
 
@@ -39,6 +41,9 @@ import base64
 import os
 
 import unicodedata
+import time
+import requests
+import re
 
 from io import BytesIO
 
@@ -56,7 +61,7 @@ from scipy.stats import poisson
 
 st.set_page_config(
 
-    page_title="Modelo de Predicción Liga 1 Perú - Quipus Data",
+    page_title="Quipus Data 4.0 - Liga 1 Perú",
 
     page_icon="⚽",
 
@@ -105,7 +110,7 @@ else:
 
 
 
-st.title("⚽ Modelo de Predicción Liga 1 Perú")
+st.title("⚽ Quipus Data 4.0 | Liga 1 Perú")
 
 st.caption(
 
@@ -351,6 +356,295 @@ def primera_columna(df, candidatas):
 
 # ---------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------
+# 1.1. Capa de datos complementarios (CSV + API-Football)
+# ---------------------------------------------------------------------
+COLUMNAS_STATS = [
+    "fecha", "local", "visita",
+    "tiros_local", "tiros_visita",
+    "tiros_puerta_local", "tiros_puerta_visita",
+    "corners_local", "corners_visita",
+    "faltas_local", "faltas_visita",
+    "amarillas_local", "amarillas_visita",
+    "rojas_local", "rojas_visita",
+]
+
+ALIASES_STATS = {
+    "date": "fecha", "match_date": "fecha", "fixture_date": "fecha",
+    "home": "local", "home_team": "local", "equipo_local": "local",
+    "away": "visita", "away_team": "visita", "equipo_visitante": "visita",
+    "shots_home": "tiros_local", "home_shots": "tiros_local",
+    "total_shots_home": "tiros_local", "tiros_local": "tiros_local",
+    "shots_away": "tiros_visita", "away_shots": "tiros_visita",
+    "total_shots_away": "tiros_visita", "tiros_visita": "tiros_visita",
+    "shots_on_target_home": "tiros_puerta_local",
+    "home_shots_on_target": "tiros_puerta_local",
+    "tiros_a_puerta_local": "tiros_puerta_local",
+    "shots_on_target_away": "tiros_puerta_visita",
+    "away_shots_on_target": "tiros_puerta_visita",
+    "tiros_a_puerta_visita": "tiros_puerta_visita",
+    "corners_home": "corners_local", "home_corners": "corners_local",
+    "corner_kicks_home": "corners_local", "corners_local": "corners_local",
+    "corners_away": "corners_visita", "away_corners": "corners_visita",
+    "corner_kicks_away": "corners_visita", "corners_visita": "corners_visita",
+    "fouls_home": "faltas_local", "home_fouls": "faltas_local",
+    "faltas_local": "faltas_local",
+    "fouls_away": "faltas_visita", "away_fouls": "faltas_visita",
+    "faltas_visita": "faltas_visita",
+    "yellow_cards_home": "amarillas_local", "home_yellow_cards": "amarillas_local",
+    "tarjetas_amarillas_local": "amarillas_local", "amarillas_local": "amarillas_local",
+    "yellow_cards_away": "amarillas_visita", "away_yellow_cards": "amarillas_visita",
+    "tarjetas_amarillas_visita": "amarillas_visita", "amarillas_visita": "amarillas_visita",
+    "red_cards_home": "rojas_local", "home_red_cards": "rojas_local",
+    "tarjetas_rojas_local": "rojas_local", "rojas_local": "rojas_local",
+    "red_cards_away": "rojas_visita", "away_red_cards": "rojas_visita",
+    "tarjetas_rojas_visita": "rojas_visita", "rojas_visita": "rojas_visita",
+}
+
+def normalizar_estadisticas_partidos(df):
+    """Normaliza CSV/API a una estructura única. No inventa datos ausentes."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=COLUMNAS_STATS)
+    out = df.copy()
+    cols = []
+    for c in out.columns:
+        c0 = unicodedata.normalize("NFD", str(c).strip().lower())
+        c0 = "".join(ch for ch in c0 if unicodedata.category(ch) != "Mn")
+        c0 = re.sub(r"[^a-z0-9]+", "_", c0).strip("_")
+        cols.append(ALIASES_STATS.get(c0, c0))
+    out.columns = cols
+    # También admite los nombres canónicos ya normalizados.
+    out = out.loc[:, ~out.columns.duplicated()].copy()
+    for c in COLUMNAS_STATS:
+        if c not in out.columns:
+            out[c] = np.nan
+    out["fecha"] = pd.to_datetime(out["fecha"], errors="coerce", dayfirst=True)
+    for c in COLUMNAS_STATS:
+        if c not in ("fecha", "local", "visita"):
+            out[c] = pd.to_numeric(
+                out[c].astype(str).str.replace(",", ".", regex=False), errors="coerce"
+            )
+    out["local"] = out["local"].fillna("").astype(str).str.strip()
+    out["visita"] = out["visita"].fillna("").astype(str).str.strip()
+    out["local_std"] = out["local"].map(normalizar_nombre)
+    out["visita_std"] = out["visita"].map(normalizar_nombre)
+    out = out[(out["local_std"] != "") & (out["visita_std"] != "")]
+    return out.sort_values("fecha", na_position="last").reset_index(drop=True)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def descargar_stats_footystats(api_key, season_id):
+    """
+    Descarga partidos y nombres de equipos desde FootyStats.
+    Usa league-matches + league-teams porque el endpoint de partidos puede
+    devolver IDs de equipo en lugar de nombres legibles.
+    """
+    base = "https://api.football-data-api.com"
+    params = {"key": api_key, "season_id": int(season_id), "max_per_page": 1000}
+    rm = requests.get(f"{base}/league-matches", params=params, timeout=30)
+    rm.raise_for_status()
+    pm = rm.json()
+    if pm.get("success") is False:
+        raise ValueError(f"FootyStats: {pm.get('message', pm)}")
+    match_rows = pm.get("data", [])
+    if isinstance(match_rows, dict):
+        match_rows = match_rows.get("matches", match_rows.get("data", []))
+    if not isinstance(match_rows, list):
+        raise ValueError("La respuesta de FootyStats no contiene una lista de partidos.")
+
+    rt = requests.get(
+        f"{base}/league-teams",
+        params={"key": api_key, "season_id": int(season_id), "include": "stats"},
+        timeout=30,
+    )
+    rt.raise_for_status()
+    pt = rt.json()
+    team_rows = pt.get("data", [])
+    if isinstance(team_rows, dict):
+        team_rows = team_rows.get("teams", team_rows.get("data", []))
+    team_map = {}
+    if isinstance(team_rows, list):
+        for team in team_rows:
+            if isinstance(team, dict) and team.get("id") is not None:
+                team_map[str(team.get("id"))] = team.get("name", team.get("cleanName", ""))
+
+    filas = []
+    for match in match_rows:
+        if not isinstance(match, dict) or match.get("status") != "complete":
+            continue
+        home = match.get("home_name") or match.get("homeTeam") or team_map.get(str(match.get("homeID")), "")
+        away = match.get("away_name") or match.get("awayTeam") or team_map.get(str(match.get("awayID")), "")
+        if not home or not away:
+            continue
+        ts = match.get("date_unix")
+        try:
+            fecha = pd.to_datetime(int(ts), unit="s", utc=True).tz_convert(None) if ts else pd.NaT
+        except (TypeError, ValueError, OverflowError):
+            fecha = pd.NaT
+        filas.append({
+            "fecha": fecha, "local": home, "visita": away, "fuente": "FootyStats API",
+            "tiros_local": match.get("team_a_shots"),
+            "tiros_visita": match.get("team_b_shots"),
+            "tiros_puerta_local": match.get("team_a_shotsOnTarget"),
+            "tiros_puerta_visita": match.get("team_b_shotsOnTarget"),
+            "corners_local": match.get("team_a_corners"),
+            "corners_visita": match.get("team_b_corners"),
+            "faltas_local": match.get("team_a_fouls"),
+            "faltas_visita": match.get("team_b_fouls"),
+            "amarillas_local": match.get("team_a_yellow_cards"),
+            "amarillas_visita": match.get("team_b_yellow_cards"),
+            "rojas_local": match.get("team_a_red_cards"),
+            "rojas_visita": match.get("team_b_red_cards"),
+        })
+    return normalizar_estadisticas_partidos(pd.DataFrame(filas))
+
+
+def obtener_estadistica_api(stats, nombre):
+    """Extrae un valor de la respuesta API-Football, tolerando etiquetas alternativas."""
+    if not isinstance(stats, list):
+        return np.nan
+    equivalencias = {
+        "tiros": ["Total Shots"],
+        "tiros_puerta": ["Shots on Goal", "Shots on Target"],
+        "corners": ["Corner Kicks"],
+        "faltas": ["Fouls"],
+        "amarillas": ["Yellow Cards"],
+        "rojas": ["Red Cards"],
+    }
+    buscados = equivalencias.get(nombre, [])
+    for item in stats:
+        if str(item.get("type", "")).strip() in buscados:
+            valor = item.get("value")
+            if valor is None or valor == "":
+                return np.nan
+            try:
+                return float(str(valor).replace("%", "").replace(",", "."))
+            except (TypeError, ValueError):
+                return np.nan
+    return np.nan
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def descargar_stats_api_football(api_key, league_id, season, limite=30):
+    """
+    Recupera estadísticas de partidos finalizados desde API-Football.
+    Requiere una clave válida y que el plan permita la competición solicitada.
+    El límite evita realizar llamadas masivas en cada ejecución.
+    """
+    base = "https://v3.football.api-sports.io"
+    headers = {"x-apisports-key": api_key}
+    r = requests.get(
+        f"{base}/fixtures",
+        headers=headers,
+        params={"league": int(league_id), "season": int(season)},
+        timeout=30,
+    )
+    r.raise_for_status()
+    payload = r.json()
+    if payload.get("errors"):
+        raise ValueError(f"API-Football: {payload['errors']}")
+    fixtures = payload.get("response", [])
+    finalizados = [
+        x for x in fixtures
+        if x.get("fixture", {}).get("status", {}).get("short") in {"FT", "AET", "PEN"}
+    ]
+    finalizados = sorted(
+        finalizados, key=lambda x: x.get("fixture", {}).get("date", ""), reverse=True
+    )[:max(1, min(int(limite), 50))]
+    filas = []
+    for n, fx in enumerate(finalizados, start=1):
+        fid = fx.get("fixture", {}).get("id")
+        teams = fx.get("teams", {})
+        home = teams.get("home", {}).get("name", "")
+        away = teams.get("away", {}).get("name", "")
+        fecha = fx.get("fixture", {}).get("date")
+        if not fid or not home or not away:
+            continue
+        rs = requests.get(
+            f"{base}/fixtures/statistics", headers=headers,
+            params={"fixture": fid}, timeout=30
+        )
+        rs.raise_for_status()
+        body = rs.json()
+        response = body.get("response", [])
+        hstats, astats = [], []
+        for block in response:
+            team_name = block.get("team", {}).get("name", "")
+            if team_name == home:
+                hstats = block.get("statistics", [])
+            elif team_name == away:
+                astats = block.get("statistics", [])
+        row = {"fecha": fecha, "local": home, "visita": away}
+        for metric in ("tiros", "tiros_puerta", "corners", "faltas", "amarillas", "rojas"):
+            row[f"{metric}_local"] = obtener_estadistica_api(hstats, metric)
+            row[f"{metric}_visita"] = obtener_estadistica_api(astats, metric)
+        filas.append(row)
+        # Pequeña pausa para no disparar peticiones consecutivas.
+        if n < len(finalizados):
+            time.sleep(0.15)
+    return normalizar_estadisticas_partidos(pd.DataFrame(filas))
+
+def predecir_estadisticas_secundarias(local, visita, fecha_partido=None):
+    """
+    Estimación independiente de tiros, tiros a puerta, córners, faltas y tarjetas.
+    Usa promedios de los últimos cinco registros disponibles por equipo.
+    No modifica lambdas ni probabilidades 1X2.
+    """
+    df = globals().get("estadisticas_partidos", pd.DataFrame())
+    vacio = {
+        "Tiros esperados total": np.nan, "Tiros a puerta esperados total": np.nan,
+        "Córners esperados total": np.nan, "Faltas esperadas total": np.nan,
+        "Tarjetas amarillas esperadas total": np.nan,
+        "Partidos estadísticos disponibles": 0,
+    }
+    if (not APLICAR_STATS_SECUNDARIAS or df is None or df.empty
+            or fecha_partido is None or pd.isna(fecha_partido)):
+        return vacio
+    h = df.copy()
+    fecha_obj = pd.Timestamp(fecha_partido).normalize()
+    h = h[h["fecha"].notna() & (h["fecha"].dt.normalize() < fecha_obj)]
+    eq_l, eq_v = normalizar_nombre(local), normalizar_nombre(visita)
+    if h.empty:
+        return vacio
+
+    metricas = {
+        "tiros": ("tiros_local", "tiros_visita"),
+        "tiros_puerta": ("tiros_puerta_local", "tiros_puerta_visita"),
+        "corners": ("corners_local", "corners_visita"),
+        "faltas": ("faltas_local", "faltas_visita"),
+        "amarillas": ("amarillas_local", "amarillas_visita"),
+    }
+    salidas = {}
+    n_total = 0
+    for nombre, (col_l, col_v) in metricas.items():
+        valores_equipo = []
+        for eq in (eq_l, eq_v):
+            loc = h[h["local_std"] == eq][col_l]
+            vis = h[h["visita_std"] == eq][col_v]
+            serie = pd.concat([loc, vis]).dropna().tail(5)
+            valores_equipo.append(float(serie.mean()) if len(serie) else np.nan)
+        # No se presenta un total si falta la muestra de uno de los dos clubes.
+        if all(np.isfinite(v) for v in valores_equipo):
+            salidas[nombre] = float(sum(valores_equipo))
+            n_total = max(n_total, min(
+                len(pd.concat([h[h["local_std"] == eq_l][col_l],
+                               h[h["visita_std"] == eq_l][col_v]]).dropna().tail(5)),
+                len(pd.concat([h[h["local_std"] == eq_v][col_l],
+                               h[h["visita_std"] == eq_v][col_v]]).dropna().tail(5))
+            ))
+        else:
+            salidas[nombre] = np.nan
+    return {
+        "Tiros esperados total": round(salidas["tiros"], 2) if np.isfinite(salidas["tiros"]) else np.nan,
+        "Tiros a puerta esperados total": round(salidas["tiros_puerta"], 2) if np.isfinite(salidas["tiros_puerta"]) else np.nan,
+        "Córners esperados total": round(salidas["corners"], 2) if np.isfinite(salidas["corners"]) else np.nan,
+        "Faltas esperadas total": round(salidas["faltas"], 2) if np.isfinite(salidas["faltas"]) else np.nan,
+        "Tarjetas amarillas esperadas total": round(salidas["amarillas"], 2) if np.isfinite(salidas["amarillas"]) else np.nan,
+        "Partidos estadísticos disponibles": int(n_total),
+    }
+
+
+
 # 2. Carga del Excel y lectura robusta de la hoja Formulas
 
 # ---------------------------------------------------------------------
@@ -518,13 +812,98 @@ except Exception as exc:
 
 st.sidebar.caption(f"Archivo activo: {nombre_archivo}")
 
+
+# Carga mixta de estadísticas complementarias.
+st.sidebar.subheader("📊 Datos complementarios")
+archivo_stats = st.sidebar.file_uploader(
+    "Importar estadísticas de partidos (CSV)", type=["csv"], key="csv_stats_4"
+)
+if archivo_stats is not None:
+    try:
+        stats_csv = pd.read_csv(archivo_stats)
+        st.session_state["stats_quipus_4"] = normalizar_estadisticas_partidos(stats_csv)
+        st.sidebar.success(f"CSV cargado: {len(st.session_state['stats_quipus_4'])} partidos.")
+    except Exception as exc:
+        st.sidebar.error(f"No se pudo leer el CSV de estadísticas: {exc}")
+
+
+with st.sidebar.expander("Conectar FootyStats API", expanded=False):
+    footy_key = st.text_input("Clave API FootyStats", value="", type="password", key="footy_key_4")
+    footy_season = st.text_input("ID de temporada (season_id)", value="", key="footy_season_4")
+    st.caption("FootyStats requiere que la temporada y la Liga 1 estén habilitadas en tu cuenta.")
+    if st.button("Importar desde FootyStats", key="btn_footy_stats_4"):
+        if not footy_key or not footy_season.strip().isdigit():
+            st.error("Introduce la clave API y el ID numérico de temporada.")
+        else:
+            try:
+                with st.spinner("Descargando partidos y estadísticas de FootyStats..."):
+                    footy_stats = descargar_stats_footystats(footy_key, int(footy_season))
+                if footy_stats.empty:
+                    st.warning("FootyStats no devolvió partidos finalizados con estadísticas.")
+                else:
+                    st.session_state["stats_quipus_4"] = footy_stats
+                    st.success(f"FootyStats importó {len(footy_stats)} partidos.")
+            except Exception as exc:
+                st.error(f"No se pudo consultar FootyStats: {exc}")
+
+with st.sidebar.expander("Conectar API-Football", expanded=False):
+    api_key_default = ""
+    try:
+        api_key_default = st.secrets.get("API_FOOTBALL_KEY", "")
+    except Exception:
+        pass
+    api_key = st.text_input("API key", value=api_key_default, type="password", key="api_football_key_4")
+    api_league = st.text_input("ID de Liga 1 en API-Football", value="", key="api_league_4")
+    api_season = st.number_input("Temporada", min_value=2010, max_value=2035, value=2026, key="api_season_4")
+    api_limit = st.slider("Últimos partidos a consultar", 5, 50, 30, key="api_limit_4")
+    if st.button("Consultar estadísticas de la API", key="btn_api_stats_4"):
+        if not api_key or not api_league.strip().isdigit():
+            st.error("Introduce una API key y el ID numérico de la competición.")
+        else:
+            try:
+                with st.spinner("Consultando partidos y estadísticas..."):
+                    api_stats = descargar_stats_api_football(api_key, int(api_league), int(api_season), int(api_limit))
+                if api_stats.empty:
+                    st.warning("La API no devolvió estadísticas utilizables para esos partidos.")
+                else:
+                    st.session_state["stats_quipus_4"] = api_stats
+                    st.success(f"Se importaron estadísticas de {len(api_stats)} partidos.")
+            except Exception as exc:
+                st.error(f"No se pudo consultar API-Football: {exc}")
+
+if "stats_quipus_4" not in st.session_state:
+    st.session_state["stats_quipus_4"] = pd.DataFrame(columns=COLUMNAS_STATS)
+estadisticas_partidos = normalizar_estadisticas_partidos(st.session_state["stats_quipus_4"])
+
+
 faltantes = [h for h in HOJAS_ESPERADAS if h not in datos["hojas_disponibles"]]
 
 if faltantes:
 
     st.warning("No se encontraron estas hojas: " + ", ".join(faltantes))
+if datos.get("alerta_xg_apertura_visita"):
+    st.warning(datos["alerta_xg_apertura_visita"])
+if not estadisticas_partidos.empty:
+    st.sidebar.caption(f"Estadísticas complementarias activas: {len(estadisticas_partidos)} partidos.")
+else:
+    st.sidebar.info(
+        "Sin estadísticas complementarias cargadas. Los mercados de tiros, córners, "
+        "faltas y tarjetas aparecerán como no disponibles."
+    )
 
 
+
+
+if not estadisticas_partidos.empty:
+    with st.sidebar.expander("Vista previa de datos complementarios"):
+        st.dataframe(estadisticas_partidos.tail(12), use_container_width=True, hide_index=True)
+        st.download_button(
+            "Descargar estadísticas normalizadas",
+            data=estadisticas_partidos.to_csv(index=False).encode("utf-8-sig"),
+            file_name="quipus_estadisticas_normalizadas.csv",
+            mime="text/csv",
+            key="download_stats_4",
+        )
 
 partidos = datos["Partidos_Fecha"].copy()
 
@@ -585,6 +964,15 @@ def construir_historico(datos):
                 df[xg] = np.nan
 
             df[xg] = pd.to_numeric(df[xg], errors="coerce")
+
+        if hoja == "Resultados_Apertura" and "xg_visita" in df.columns:
+            xgv = df["xg_visita"].dropna()
+            if len(xgv) >= 20 and xgv.nunique() <= 5:
+                df["xg_visita"] = np.nan
+                datos["alerta_xg_apertura_visita"] = (
+                    "xG visitante del Apertura excluido: solo presenta "
+                    f"{xgv.nunique()} valores distintos en {len(xgv)} registros."
+                )
 
         partes.append(df)
 
@@ -1097,9 +1485,16 @@ def metricas_equipo(datos, equipo, fecha_partido=None, jornada_partido=None):
 
 # ---------------------------------------------------------------------
 
-PESO_XG_MODELO = 0.00  # xG desactivado por defecto: el backtest inicial empeoró Brier/log loss al mezclarlo.
+PESO_XG_MODELO = 0.00  # xG sigue desactivado por defecto hasta validar mejora fuera de muestra.
+PESO_XG_MODELO = st.sidebar.slider(
+    "Peso de xG en el modelo 1X2", min_value=0.0, max_value=0.50,
+    value=float(PESO_XG_MODELO), step=0.05,
+    help="0% usa solo goles; cualquier peso mayor mezcla xG. Valida el ajuste con backtesting."
+)
 
 APLICAR_MICROAJUSTE_PRESION = False
+APLICAR_H2H_MODELO = True
+APLICAR_STATS_SECUNDARIAS = True
 
 
 
@@ -1221,7 +1616,7 @@ def obtener_contexto(datos, partido):
 
     h2h = datos["Historial_H2H"]
 
-    if not h2h.empty and {"local_std", "visita_std", "gl", "gv"}.issubset(h2h.columns):
+    if APLICAR_H2H_MODELO and not h2h.empty and {"local_std", "visita_std", "gl", "gv"}.issubset(h2h.columns):
 
         h = h2h[
 
@@ -1600,7 +1995,7 @@ def pronosticar_partido(datos, partido):
 
 
 
-    return {
+    resultado = {
 
         "Señal": senal, "Estado": estado, "Día": dia or "Por definir",
 
@@ -1642,6 +2037,8 @@ def pronosticar_partido(datos, partido):
         "Criterios marcador": ", ".join(criterios_marcador),
         "Presión competitiva": contexto.get("presion_texto", "No disponible") if isinstance(contexto, dict) else "No disponible",
     }
+    resultado.update(predecir_estadisticas_secundarias(loc, vis, fecha))
+    return resultado
 
 
 # ---------------------------------------------------------------------
@@ -1721,7 +2118,10 @@ else:
                 "Señal", "Estado", "Día", "Hora", "Local", "Visita",
                 "% Local", "% Empate", "% Visita", "Pronóstico 1X2",
                 "Marcador compatible", "Más de 2.5 goles",
-                "Menos de 2.5 goles", "Ambos marcan: Sí", "Recomendacion",
+                "Menos de 2.5 goles", "Ambos marcan: Sí",
+                "Tiros esperados total", "Tiros a puerta esperados total",
+                "Córners esperados total", "Faltas esperadas total",
+                "Tarjetas amarillas esperadas total", "Recomendacion",
             ]
             # El marcador modal se conserva internamente para métricas de backtesting,
             # pero se elimina de la vista principal y del CSV de pronósticos.
@@ -1757,6 +2157,8 @@ else:
                 "Señal", "Local", "Visita", "Pronóstico 1X2",
                 "% Local", "% Empate", "% Visita",
                 "Más de 2.5 goles", "Menos de 2.5 goles", "Ambos marcan: Sí",
+                "Tiros esperados total", "Tiros a puerta esperados total",
+                "Córners esperados total",
             ]
             columnas_resumen = [c for c in columnas_resumen if c in df_resultados.columns]
             df_resumen = df_resultados[columnas_resumen].copy()
@@ -1816,7 +2218,10 @@ else:
                     "Prom_GF_Local", "Prom_GC_Local", "Prom_GF_Visita", "Prom_GC_Visita",
                     "D2", "D6", "Altitud del estadio usada por fórmula",
                     "Factores contexto local", "Factores contexto visita", "Criterios marcador",
-                    "Presión competitiva",
+                    "Presión competitiva", "Tiros esperados total",
+                    "Tiros a puerta esperados total", "Córners esperados total",
+                    "Faltas esperadas total", "Tarjetas amarillas esperadas total",
+                    "Partidos estadísticos disponibles",
                 ]
                 cols_tec = [c for c in tecnicas if c in df_resultados.columns]
                 st.dataframe(df_resultados[cols_tec], use_container_width=True, hide_index=True)
@@ -1907,11 +2312,21 @@ with st.expander("📈 Backtesting: evaluación con partidos ya jugados", expand
     if st.button("Ejecutar backtesting del Clausura", key="btn_backtesting"):
         with st.spinner("Comparando el modelo con y sin xG, respetando el orden de las jornadas..."):
             peso_original = PESO_XG_MODELO
-            PESO_XG_MODELO = 0.0
-            df_bt, mensaje_bt = ejecutar_backtesting_clausura(datos)
-            PESO_XG_MODELO = 0.20
-            df_con_xg, mensaje_con_xg = ejecutar_backtesting_clausura(datos)
-            PESO_XG_MODELO = peso_original
+            h2h_original = APLICAR_H2H_MODELO
+            stats_original = APLICAR_STATS_SECUNDARIAS
+            # H2H y estadísticas secundarias se desactivan durante backtesting:
+            # los resultados históricos no tienen fecha individual verificable.
+            APLICAR_H2H_MODELO = False
+            APLICAR_STATS_SECUNDARIAS = False
+            try:
+                PESO_XG_MODELO = 0.0
+                df_bt, mensaje_bt = ejecutar_backtesting_clausura(datos)
+                PESO_XG_MODELO = 0.20
+                df_con_xg, mensaje_con_xg = ejecutar_backtesting_clausura(datos)
+            finally:
+                PESO_XG_MODELO = peso_original
+                APLICAR_H2H_MODELO = h2h_original
+                APLICAR_STATS_SECUNDARIAS = stats_original
             mensaje_sin_xg = None
         if mensaje_bt or mensaje_con_xg:
             st.error(mensaje_bt or mensaje_con_xg)
